@@ -40,8 +40,21 @@ fi
 
 is_active_profile() {
   target="$1"
-  pgrep -af 'chrome|chromium' 2>/dev/null |
-    grep -F -- "--user-data-dir=$target" >/dev/null 2>&1
+  TARGET_PROFILE="$target" python3 - <<'PY'
+import glob
+import os
+import sys
+
+needle = ("--user-data-dir=" + os.environ["TARGET_PROFILE"]).encode()
+for cmdline_path in glob.glob("/proc/[0-9]*/cmdline"):
+    try:
+        arguments = open(cmdline_path, "rb").read().split(b"\0")
+    except OSError:
+        continue
+    if needle in arguments:
+        sys.exit(0)
+sys.exit(1)
+PY
 }
 
 is_tracked_path() {
