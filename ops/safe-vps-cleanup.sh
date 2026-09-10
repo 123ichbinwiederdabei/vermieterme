@@ -122,7 +122,10 @@ fi
 
 if [ "$MODE" = "apply" ]; then
   docker container prune --force
-  docker image prune --all --force
+  # Keep every tagged image: Swarm services may reference a version tag that
+  # is not attached to the currently running container after an update.
+  docker image prune --force
+  docker builder prune --all --force
 fi
 
 echo "--- after ---"
