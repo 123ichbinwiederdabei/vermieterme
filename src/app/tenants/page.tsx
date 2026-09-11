@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Nav } from "@/components/nav";
-import { formatDate, formatCurrency } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import { centsToEuro } from "@/lib/money";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Loading } from "@/components/ui/loading";
@@ -12,7 +14,18 @@ import { SALUTATIONS, SALUTATIONS_SECONDARY } from "@/lib/constants";
 import { validateIBAN, formatIBAN } from "@/lib/iban";
 import { DocumentUpload } from "@/components/document-upload";
 import { TenantAccessToken } from "@/components/tenant-access-token";
-import type { TenantWithUnit, PropertyWithUnits, RentChangeWithUnit } from "@/types";
+import type { TenantWithUnit, PropertyWithUnits } from "@/types";
+
+type FinancialPeriod = {
+  id: string;
+  validFrom: string;
+  validTo: string | null;
+  monthlyColdRentCents: string;
+  monthlyPrepaymentCents: string;
+  supersededAt: string | null;
+};
+
+type TenantWithFinance = TenantWithUnit & { financialPeriods: FinancialPeriod[] };
 
 const leaseTypeOptions: ComboboxOption[] = [
   { value: "standard", label: "Standard" },
@@ -21,22 +34,14 @@ const leaseTypeOptions: ComboboxOption[] = [
 ];
 
 export default function TenantsPage() {
-  const [tenants, setTenants] = useState<TenantWithUnit[]>([]);
+  const [tenants, setTenants] = useState<TenantWithFinance[]>([]);
   const [properties, setProperties] = useState<PropertyWithUnits[]>([]);
-  const [rentChanges, setRentChanges] = useState<RentChangeWithUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [expandedTenant, setExpandedTenant] = useState<string | null>(null);
-  const [adjustTarget, setAdjustTarget] = useState<string | null>(null);
   const [accessTokenTarget, setAccessTokenTarget] = useState<string | null>(null);
-  const [adjustForm, setAdjustForm] = useState({
-    type: "prepayment" as "rent" | "prepayment",
-    amount: "",
-    effectiveDate: new Date().toISOString().split("T")[0],
-    reason: "",
-  });
 
   const [form, setForm] = useState({
     unitId: "",
@@ -66,10 +71,9 @@ export default function TenantsPage() {
 
   async function fetchData() {
     try {
-      const [tenantsRes, propsRes, rentChangesRes] = await Promise.all([
+      const [tenantsRes, propsRes] = await Promise.all([
         fetch("/api/tenants"),
         fetch("/api/properties"),
-        fetch("/api/rent-changes"),
       ]);
 
       if (tenantsRes.ok) {
@@ -85,9 +89,6 @@ export default function TenantsPage() {
         setProperties(details);
       }
 
-      if (rentChangesRes.ok) {
-        setRentChanges(await rentChangesRes.json());
-      }
     } catch (error) {
       console.error("Failed to fetch data:", error);
     } finally {
@@ -211,36 +212,6 @@ export default function TenantsPage() {
     }
   }
 
-  async function handleAdjustSubmit(unitId: string) {
-    try {
-      const res = await fetch("/api/rent-changes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          unitId,
-          type: adjustForm.type,
-          amount: parseFloat(adjustForm.amount),
-          effectiveDate: adjustForm.effectiveDate,
-          reason: adjustForm.reason || null,
-        }),
-      });
-      if (res.ok) {
-        setAdjustTarget(null);
-        setAdjustForm({
-          type: "prepayment",
-          amount: "",
-          effectiveDate: new Date().toISOString().split("T")[0],
-          reason: "",
-        });
-        // Refresh rent changes
-        const rcRes = await fetch("/api/rent-changes");
-        if (rcRes.ok) setRentChanges(await rcRes.json());
-      }
-    } catch (error) {
-      console.error("Failed to save adjustment:", error);
-    }
-  }
-
   function startEdit(tenant: TenantWithUnit) {
     setEditingId(tenant.id);
     setShowNewForm(false);
@@ -288,14 +259,16 @@ export default function TenantsPage() {
       groups[propKey].push(tenant);
       return groups;
     },
-    {} as Record<string, TenantWithUnit[]>
+    {} as Record<string, TenantWithFinance[]>
   );
 
-  function getLatestRentChange(unitId: string, type: "rent" | "prepayment") {
-    const matches = rentChanges
-      .filter((rc) => rc.unitId === unitId && rc.type === type)
-      .sort((a, b) => new Date(b.effectiveDate).getTime() - new Date(a.effectiveDate).getTime());
-    return matches.length > 0 ? matches[0] : null;
+  function getCurrentFinancialPeriod(tenant: TenantWithFinance) {
+    const today = new Date();
+    return tenant.financialPeriods.find((period) =>
+      !period.supersededAt &&
+      new Date(period.validFrom) <= today &&
+      (!period.validTo || new Date(period.validTo) >= today)
+    ) ?? null;
   }
 
   function renderForm(
@@ -726,30 +699,16 @@ export default function TenantsPage() {
                                 )}
                               </div>
                               {(() => {
-                                const latestRent = getLatestRentChange(tenant.unitId, "rent");
-                                const latestPrepayment = getLatestRentChange(tenant.unitId, "prepayment");
+                                const financialPeriod = getCurrentFinancialPeriod(tenant);
+                                const historyHref = `/rent-changes?tenantId=${encodeURIComponent(tenant.id)}`;
                                 return (
-                                  <div className="mt-2 flex items-center gap-4 text-sm text-zinc-500">
-                                    <span>
-                                      Kaltmiete: {latestRent ? formatCurrency(latestRent.amount) : "–"}
-                                    </span>
-                                    <span>
-                                      NK-Vorauszahlung: {latestPrepayment ? formatCurrency(latestPrepayment.amount) : "–"}
-                                    </span>
-                                    <button
-                                      onClick={() => {
-                                        setAdjustTarget(adjustTarget === tenant.id ? null : tenant.id);
-                                        setAdjustForm({
-                                          type: latestRent ? "prepayment" : "rent",
-                                          amount: "",
-                                          effectiveDate: new Date().toISOString().split("T")[0],
-                                          reason: "",
-                                        });
-                                      }}
-                                      className="rounded border border-zinc-300 px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
-                                    >
-                                      Anpassen
-                                    </button>
+                                  <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-zinc-500">
+                                    {financialPeriod ? <>
+                                      <span>Kaltmiete: {centsToEuro(financialPeriod.monthlyColdRentCents)}</span>
+                                      <span>NK-Vorauszahlung: {centsToEuro(financialPeriod.monthlyPrepaymentCents)}</span>
+                                    </> : <span className="font-medium text-amber-700">Kein vollständiger Finanzstand hinterlegt</span>}
+                                    <Link href={historyHref} className="rounded border border-zinc-300 px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50">Miet- und NK-Historie</Link>
+                                    <Link href={`${historyHref}&new=1`} className="rounded border border-zinc-300 px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50">Anpassen</Link>
                                   </div>
                                 );
                               })()}
@@ -789,89 +748,6 @@ export default function TenantsPage() {
                               </button>
                             </div>
                           </div>
-
-                          {/* NK-Anpassung */}
-                          {adjustTarget === tenant.id && (
-                            <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4">
-                              <p className="mb-3 text-sm font-medium text-zinc-700">
-                                Miete / Vorauszahlung anpassen
-                              </p>
-                              <div className="grid gap-3 sm:grid-cols-4">
-                                <div>
-                                  <label className="mb-1 block text-xs font-medium text-zinc-500">
-                                    Art
-                                  </label>
-                                  <Combobox
-                                    options={[
-                                      { value: "prepayment", label: "NK-Vorauszahlung" },
-                                      { value: "rent", label: "Kaltmiete" },
-                                    ]}
-                                    value={adjustForm.type}
-                                    onChange={(val) =>
-                                      setAdjustForm({ ...adjustForm, type: val as "rent" | "prepayment" })
-                                    }
-                                  />
-                                </div>
-                                <div>
-                                  <label className="mb-1 block text-xs font-medium text-zinc-500">
-                                    Neuer Betrag
-                                  </label>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={adjustForm.amount}
-                                    onChange={(e) =>
-                                      setAdjustForm({ ...adjustForm, amount: e.target.value })
-                                    }
-                                    placeholder="0,00"
-                                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="mb-1 block text-xs font-medium text-zinc-500">
-                                    Gültig ab
-                                  </label>
-                                  <input
-                                    type="date"
-                                    value={adjustForm.effectiveDate}
-                                    onChange={(e) =>
-                                      setAdjustForm({ ...adjustForm, effectiveDate: e.target.value })
-                                    }
-                                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="mb-1 block text-xs font-medium text-zinc-500">
-                                    Grund (optional)
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={adjustForm.reason}
-                                    onChange={(e) =>
-                                      setAdjustForm({ ...adjustForm, reason: e.target.value })
-                                    }
-                                    placeholder="z.B. Anpassung NK"
-                                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                                  />
-                                </div>
-                              </div>
-                              <div className="mt-3 flex gap-2">
-                                <button
-                                  onClick={() => handleAdjustSubmit(tenant.unitId)}
-                                  disabled={!adjustForm.amount}
-                                  className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-50"
-                                >
-                                  Speichern
-                                </button>
-                                <button
-                                  onClick={() => setAdjustTarget(null)}
-                                  className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                                >
-                                  Abbrechen
-                                </button>
-                              </div>
-                            </div>
-                          )}
 
                           {/* App-Zugang */}
                           {accessTokenTarget === tenant.id && (

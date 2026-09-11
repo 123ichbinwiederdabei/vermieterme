@@ -58,3 +58,41 @@ test("electricity and finance dashboards are available", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Miet- und NK-Historie" })).toBeVisible();
   await expect(page.getByText("Kaltmiete").first()).toBeVisible();
 });
+
+test("tenant card opens and updates the complete finance history", async ({ page, request }) => {
+  await login(page);
+  await page.getByRole("navigation").getByRole("link", { name: "Mieter", exact: true }).click();
+
+  const annaCard = page.getByText("Frau Anna Schmidt").locator("xpath=ancestor::div[contains(@class, 'rounded-xl')][1]");
+  await expect(annaCard.getByText("Kaltmiete: 850,00 €")).toBeVisible();
+  await expect(annaCard.getByText("NK-Vorauszahlung: 200,00 €")).toBeVisible();
+  await annaCard.getByRole("link", { name: "Anpassen" }).click();
+
+  await expect(page).toHaveURL(/\/rent-changes\?tenantId=tenant-1&new=1/);
+  await expect(page.getByRole("heading", { name: "Vollständigen Stand speichern" })).toBeVisible();
+  await expect(page.getByLabel("Mietverhältnis")).toHaveValue("tenant-1");
+  await expect(page.getByLabel("Mietverhältnis")).toBeDisabled();
+  await expect(page.getByLabel("Kaltmiete (€)")).toHaveValue("850.00");
+  await expect(page.getByLabel("NK Heizöl (€)")).toHaveValue("100.00");
+  await expect(page.getByLabel("NK Strom (€)")).toHaveValue("100.00");
+
+  const validFrom = await page.getByLabel("Gültig ab").inputValue();
+  await page.getByLabel("Kaltmiete (€)").fill("900.00");
+  await page.getByLabel("Änderungsgrund").fill("Mietanpassung E2E");
+  await page.getByRole("button", { name: "Periode speichern" }).click();
+  await expect(page.getByText("Finanzperiode gespeichert")).toBeVisible();
+  await expect(page.getByText("Kaltmiete 900,00 €").first()).toBeVisible();
+
+  const cookies = (await page.context().cookies()).map((row) => `${row.name}=${row.value}`).join("; ");
+  const periodsResponse = await request.get("/api/tenants/tenant-1/financial-periods", { headers: { cookie: cookies } });
+  expect(periodsResponse.ok()).toBeTruthy();
+  const periods = await periodsResponse.json();
+  const previous = periods.find((period: { monthlyColdRentCents: string }) => period.monthlyColdRentCents === "85000");
+  const previousEnd = new Date(`${validFrom}T00:00:00.000Z`);
+  previousEnd.setUTCDate(previousEnd.getUTCDate() - 1);
+  expect(previous?.validTo.slice(0, 10)).toBe(previousEnd.toISOString().slice(0, 10));
+
+  await page.getByRole("link", { name: "Zum Mieter" }).click();
+  await expect(annaCard.getByText("Kaltmiete: 900,00 €")).toBeVisible();
+  await expect(annaCard.getByText("NK-Vorauszahlung: 200,00 €")).toBeVisible();
+});
