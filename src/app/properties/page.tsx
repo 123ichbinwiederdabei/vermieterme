@@ -232,7 +232,7 @@ export default function PropertiesPage() {
     <>
       <Nav />
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-900">Objekte</h1>
           <button
             onClick={() => {
@@ -446,7 +446,7 @@ export default function PropertiesPage() {
                   </div>
                 ) : (
                   <div
-                    className="flex cursor-pointer items-center justify-between p-6"
+                    className="flex cursor-pointer flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"
                     onClick={() => toggleExpand(property.id)}
                   >
                     <div>
@@ -457,7 +457,7 @@ export default function PropertiesPage() {
                         {property.zip} {property.city}
                       </p>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-3 sm:justify-end">
                       <div className="text-right">
                         <p className="text-sm text-zinc-500">
                           {property._count?.units || 0} Wohnungen
@@ -466,7 +466,7 @@ export default function PropertiesPage() {
                           {property.totalShares} Anteile
                         </p>
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap gap-1">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -508,7 +508,7 @@ export default function PropertiesPage() {
                 {/* Expanded Units */}
                 {expandedId === property.id && propertyDetail && (
                   <div className="border-t border-zinc-200 px-6 pb-6 pt-4">
-                    <div className="mb-4 flex items-center justify-between">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                       <h4 className="text-sm font-semibold text-zinc-700">
                         Wohnungen
                       </h4>
@@ -532,7 +532,7 @@ export default function PropertiesPage() {
                         onSubmit={(e) => handleCreateUnit(property.id, e)}
                         className="mb-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4"
                       >
-                        <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                           <div>
                             <label className="mb-1 block text-xs font-medium text-zinc-700">
                               Bezeichnung
@@ -557,7 +557,7 @@ export default function PropertiesPage() {
                               onChange={(e) => setUnitForm({ ...unitForm, areaM2: e.target.value })}
                               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
                           </div>
-                          <label className="flex items-center gap-2 text-xs font-medium text-zinc-700">
+                          <label className="flex min-h-10 items-center gap-2 self-end text-xs font-medium text-zinc-700">
                             <input type="checkbox" checked={unitForm.ownerOccupied}
                               onChange={(e) => setUnitForm({ ...unitForm, ownerOccupied: e.target.checked })} />
                             Vom Vermieter bewohnt
@@ -622,7 +622,7 @@ export default function PropertiesPage() {
                       </p>
                     ) : (
                       <div className="overflow-x-auto">
-                        <table className="w-full">
+                        <table className="min-w-[780px] w-full">
                           <thead>
                             <tr className="border-b border-zinc-200">
                               <th className="pb-2 text-left text-xs font-medium uppercase text-zinc-500">
@@ -653,9 +653,10 @@ export default function PropertiesPage() {
                               );
                               return editingUnitId === unit.id ? (
                                 <tr key={unit.id}>
-                                  <td className="py-3" colSpan={6}>
-                                    <div className="grid gap-3 sm:grid-cols-3">
-                                      <div>
+                                  <td className="p-3" colSpan={7}>
+                                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                                      <label className="space-y-1 text-xs font-medium text-zinc-700">
+                                        <span>Bezeichnung</span>
                                         <input
                                           type="text"
                                           required
@@ -668,11 +669,15 @@ export default function PropertiesPage() {
                                           }
                                           className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
                                         />
+                                      </label>
+                                      <label className="space-y-1 text-xs font-medium text-zinc-700">
+                                        <span>Wohnfläche (m²)</span>
                                         <input type="number" min="0" step="0.001" required value={unitForm.areaM2}
                                           onChange={(e) => setUnitForm({ ...unitForm, areaM2: e.target.value })}
-                                          className="w-24 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
-                                      </div>
-                                      <div>
+                                          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
+                                      </label>
+                                      <label className="space-y-1 text-xs font-medium text-zinc-700">
+                                        <span>Stockwerk</span>
                                         <input
                                           type="text"
                                           required
@@ -685,8 +690,9 @@ export default function PropertiesPage() {
                                           }
                                           className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
                                         />
-                                      </div>
-                                      <div className="flex gap-2">
+                                      </label>
+                                      <label className="space-y-1 text-xs font-medium text-zinc-700">
+                                        <span>Anteile (MEA)</span>
                                         <input
                                           type="number"
                                           required
@@ -700,6 +706,12 @@ export default function PropertiesPage() {
                                           }
                                           className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
                                         />
+                                      </label>
+                                      <label className="flex min-h-10 items-center gap-2 self-end text-xs font-medium text-zinc-700">
+                                        <input type="checkbox" checked={unitForm.ownerOccupied} onChange={(e) => setUnitForm({ ...unitForm, ownerOccupied: e.target.checked })} />
+                                        Vom Vermieter bewohnt
+                                      </label>
+                                      <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-5">
                                         <button
                                           onClick={() =>
                                             handleUpdateUnit(

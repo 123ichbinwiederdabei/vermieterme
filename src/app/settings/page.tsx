@@ -553,7 +553,7 @@ export default function SettingsPage() {
 
         {/* Cost Categories */}
         <section>
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-zinc-900">
               Kostenarten
             </h2>
@@ -806,7 +806,7 @@ export default function SettingsPage() {
 
         {/* Users */}
         <section className="mt-10">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-zinc-900">Benutzer</h2>
             <button
               onClick={() => {

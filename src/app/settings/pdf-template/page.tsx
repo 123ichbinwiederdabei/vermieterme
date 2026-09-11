@@ -117,7 +117,7 @@ export default function PdfTemplatePage() {
       <Nav />
       <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="mb-1 flex items-center gap-2">
               <Link

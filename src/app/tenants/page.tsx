@@ -613,7 +613,7 @@ export default function TenantsPage() {
     <>
       <Nav />
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-zinc-900">Mieter</h1>
           <button
             onClick={() => {

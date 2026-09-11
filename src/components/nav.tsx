@@ -59,9 +59,8 @@ export function Nav() {
   return (
     <nav className="border-t-4 border-t-red-700 border-b border-b-zinc-200 bg-white shadow-sm">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-8">
-            <Link href="/" className="flex items-center gap-2.5">
+        <div className="flex min-h-16 items-center justify-between gap-3 py-2">
+          <Link href="/" className="flex min-w-0 shrink items-center gap-2.5">
               <LogoIcon className="h-8 w-8" />
               <div>
                 <span
@@ -80,30 +79,8 @@ export function Nav() {
                   </span>
                 </p>
               </div>
-            </Link>
-            <div className="hidden md:flex md:gap-1">
-              {links.map((link) => {
-                const isActive =
-                  link.href === "/"
-                    ? pathname === "/"
-                    : pathname.startsWith(link.href);
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                      isActive
-                        ? "bg-red-50 text-red-700"
-                        : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
-                    }`}
-                  >
-                    {link.label}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
+          </Link>
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-4">
             {session?.user && (
               <Link
                 href="/profile"
@@ -124,6 +101,24 @@ export function Nav() {
               Abmelden
             </button>
           </div>
+        </div>
+        <div className="-mx-4 flex gap-1 overflow-x-auto border-t border-zinc-100 px-4 py-1.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+          {links.map((link) => {
+            const isActive = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`shrink-0 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-red-50 text-red-700"
+                    : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
+                }`}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
         </div>
       </div>
     </nav>
