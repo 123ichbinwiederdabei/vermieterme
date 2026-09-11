@@ -34,6 +34,8 @@ export default function PropertiesPage() {
     name: "",
     floor: "",
     shares: 0,
+    areaM2: "",
+    ownerOccupied: false,
   });
 
   useEffect(() => {
@@ -172,7 +174,7 @@ export default function PropertiesPage() {
         body: JSON.stringify({ ...unitForm, propertyId }),
       });
       if (res.ok) {
-        setUnitForm({ name: "", floor: "", shares: 0 });
+        setUnitForm({ name: "", floor: "", shares: 0, areaM2: "", ownerOccupied: false });
         setShowNewUnitForm(null);
         await fetchPropertyDetail(propertyId);
         await fetchProperties();
@@ -191,7 +193,7 @@ export default function PropertiesPage() {
       });
       if (res.ok) {
         setEditingUnitId(null);
-        setUnitForm({ name: "", floor: "", shares: 0 });
+        setUnitForm({ name: "", floor: "", shares: 0, areaM2: "", ownerOccupied: false });
         await fetchPropertyDetail(propertyId);
       }
     } catch (error) {
@@ -217,6 +219,8 @@ export default function PropertiesPage() {
       name: unit.name,
       floor: unit.floor,
       shares: unit.shares,
+      areaM2: unit.areaM2 || "",
+      ownerOccupied: unit.ownerOccupied || false,
     });
   }
 
@@ -514,7 +518,7 @@ export default function PropertiesPage() {
                             showNewUnitForm === property.id ? null : property.id
                           );
                           setEditingUnitId(null);
-                          setUnitForm({ name: "", floor: "", shares: 0 });
+                          setUnitForm({ name: "", floor: "", shares: 0, areaM2: "", ownerOccupied: false });
                         }}
                         className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                       >
@@ -547,6 +551,17 @@ export default function PropertiesPage() {
                               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
                             />
                           </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-zinc-700">Wohnfläche (m²)</label>
+                            <input type="number" min="0" step="0.001" required value={unitForm.areaM2}
+                              onChange={(e) => setUnitForm({ ...unitForm, areaM2: e.target.value })}
+                              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
+                          </div>
+                          <label className="flex items-center gap-2 text-xs font-medium text-zinc-700">
+                            <input type="checkbox" checked={unitForm.ownerOccupied}
+                              onChange={(e) => setUnitForm({ ...unitForm, ownerOccupied: e.target.checked })} />
+                            Vom Vermieter bewohnt
+                          </label>
                           <div>
                             <label className="mb-1 block text-xs font-medium text-zinc-700">
                               Stockwerk
@@ -619,6 +634,7 @@ export default function PropertiesPage() {
                               <th className="pb-2 text-left text-xs font-medium uppercase text-zinc-500">
                                 Anteile
                               </th>
+                              <th className="pb-2 text-left text-xs font-medium uppercase text-zinc-500">Wohnfläche</th>
                               <th className="pb-2 text-left text-xs font-medium uppercase text-zinc-500">
                                 Aktueller Mieter
                               </th>
@@ -652,6 +668,9 @@ export default function PropertiesPage() {
                                           }
                                           className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
                                         />
+                                        <input type="number" min="0" step="0.001" required value={unitForm.areaM2}
+                                          onChange={(e) => setUnitForm({ ...unitForm, areaM2: e.target.value })}
+                                          className="w-24 rounded-lg border border-zinc-300 px-2 py-1.5 text-sm" />
                                       </div>
                                       <div>
                                         <input
@@ -699,6 +718,8 @@ export default function PropertiesPage() {
                                               name: "",
                                               floor: "",
                                               shares: 0,
+                                              areaM2: "",
+                                              ownerOccupied: false,
                                             });
                                           }}
                                           className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
@@ -720,6 +741,7 @@ export default function PropertiesPage() {
                                   <td className="py-3 text-sm text-zinc-600">
                                     {unit.shares}
                                   </td>
+                                  <td className="py-3 text-sm text-zinc-600">{unit.areaM2 ? `${unit.areaM2} m²` : "—"}{unit.ownerOccupied ? " · Vermieter" : ""}</td>
                                   <td className="py-3 text-sm text-zinc-600">
                                     {currentTenant
                                       ? `${currentTenant.firstName} ${currentTenant.lastName}`

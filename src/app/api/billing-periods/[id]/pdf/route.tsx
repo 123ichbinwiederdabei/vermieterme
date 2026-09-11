@@ -1,178 +1,20 @@
-import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
-import { getDefaultConfig } from "@/lib/pdf-template";
-import type { PdfTemplateConfig } from "@/types/pdf-template";
-import { BillingPdf, daysBetween } from "@/lib/billing-pdf";
+import { auth } from "@/lib/auth";
+import { buildAllTenantStatements, buildTenantStatement } from "@/lib/billing-statement";
+import { BillingV2Pdf } from "@/lib/billing-v2-pdf";
 
-// --- Route Handler ---
-
-export async function GET(
-  request: Request,
-  { params: paramsPromise }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await auth();
+  if (!session?.user?.id) return Response.json({ error: "Nicht angemeldet" }, { status: 401 });
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return new Response(JSON.stringify({ error: "Nicht angemeldet" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    const { id } = await paramsPromise;
-
-    // Load PDF template config
-    const templateRow = await prisma.pdfTemplate.findFirst({
-      orderBy: { updatedAt: "desc" },
-    });
-    const templateConfig: PdfTemplateConfig = templateRow
-      ? JSON.parse(templateRow.config)
-      : getDefaultConfig();
-
-    // Fetch billing period with all related data
-    const billingPeriod = await prisma.billingPeriod.findUnique({
-      where: { id },
-      include: {
-        property: {
-          include: {
-            units: {
-              include: {
-                tenants: true,
-                prepayments: {
-                  where: { billingPeriodId: id },
-                },
-              },
-            },
-          },
-        },
-        costs: {
-          include: {
-            costCategory: true,
-          },
-          orderBy: {
-            costCategory: {
-              sortOrder: "asc",
-            },
-          },
-        },
-      },
-    });
-
-    if (!billingPeriod) {
-      return new Response(
-        JSON.stringify({ error: "Billing period not found" }),
-        { status: 404, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const landlord = await prisma.landlordInfo.findFirst();
-
-    if (!landlord) {
-      return new Response(
-        JSON.stringify({ error: "Landlord info not configured" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const property = billingPeriod.property;
-    const startDate = new Date(billingPeriod.startDate);
-    const endDate = new Date(billingPeriod.endDate);
-
-    let targetUnit = null;
-    let activeTenant = null;
-
-    for (const unit of property.units) {
-      const t = unit.tenants.find(
-        (t: { moveInDate: Date; moveOutDate: Date | null }) => {
-          const moveIn = new Date(t.moveInDate);
-          const moveOut = t.moveOutDate ? new Date(t.moveOutDate) : null;
-          return moveIn <= endDate && (moveOut === null || moveOut >= startDate);
-        }
-      );
-
-      if (t) {
-        targetUnit = unit;
-        activeTenant = t;
-        break;
-      }
-    }
-
-    if (!targetUnit || !activeTenant) {
-      return new Response(
-        JSON.stringify({
-          error: "No active tenant found for this billing period",
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const costs = billingPeriod.costs
-      .filter(
-        (cost: { enabled: boolean }) => cost.enabled !== false
-      )
-      .map(
-        (cost: {
-          costCategory: { name: string; distributionKey: string };
-          totalAmount: number;
-          unitAmount: number | null;
-          distributionKeyOverride: string | null;
-        }) => ({
-          categoryName: cost.costCategory.name,
-          // Per-period override takes precedence over the category default.
-          distributionKey:
-            cost.distributionKeyOverride ?? cost.costCategory.distributionKey,
-          totalAmount: cost.totalAmount,
-          unitAmount: cost.unitAmount ?? 0,
-        })
-      );
-
-    const totalCosts = costs.reduce(
-      (sum: number, c: { totalAmount: number }) => sum + c.totalAmount,
-      0
-    );
-    const totalUnitCosts = costs.reduce(
-      (sum: number, c: { unitAmount: number }) => sum + c.unitAmount,
-      0
-    );
-
-    const prepayment = targetUnit.prepayments.find(
-      (p: { billingPeriodId: string }) => p.billingPeriodId === id
-    );
-    const months = daysBetween(startDate, endDate) / 30.44;
-    const totalPrepayment = prepayment
-      ? prepayment.monthlyAmount * Math.round(months)
-      : 0;
-
-    const year = startDate.getFullYear();
-
-    const buffer = await renderToBuffer(
-      <BillingPdf
-        landlord={landlord}
-        property={property}
-        billingPeriod={billingPeriod}
-        unit={targetUnit}
-        tenant={activeTenant}
-        costs={costs}
-        totalCosts={totalCosts}
-        totalUnitCosts={totalUnitCosts}
-        totalPrepayment={totalPrepayment}
-        templateConfig={templateConfig}
-      />
-    );
-
-    return new Response(new Uint8Array(buffer), {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="Betriebskostenabrechnung-${year}.pdf"`,
-      },
-    });
+    const { id } = await params;
+    const tenantId = new URL(request.url).searchParams.get("tenantId");
+    const statements = tenantId ? [await buildTenantStatement(id, tenantId)] : await buildAllTenantStatements(id);
+    if (statements.length === 0) return Response.json({ error: "Keine Mietverhältnisse im Zeitraum" }, { status: 400 });
+    const buffer = await renderToBuffer(<BillingV2Pdf statements={statements}/>);
+    return new Response(new Uint8Array(buffer), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="Betriebskostenabrechnung-${statements[0].startDate.slice(0, 4)}${tenantId ? `-${statements[0].unit.name}` : "-Sammeldatei"}.pdf"` } });
   } catch (error) {
-    console.error("Failed to generate billing PDF:", error);
-    return new Response(
-      JSON.stringify({ error: "Failed to generate PDF" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return Response.json({ error: error instanceof Error ? error.message : "PDF-Erzeugung fehlgeschlagen" }, { status: 500 });
   }
 }

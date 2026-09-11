@@ -12,6 +12,8 @@ services:
       - AUTH_TRUST_HOST=true
       - ADMIN_EMAIL=admin@vermieterme.local
       - ADMIN_PASSWORD=changeme123
+      - OILFOX_USER=${OILFOX_USER:-}
+      - OILFOX_PW=${OILFOX_PW:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
       interval: 30s

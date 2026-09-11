@@ -1,0 +1,18 @@
+import React from "react";
+import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
+import { centsToEuro } from "@/lib/money";
+import type { TenantStatement } from "@/lib/billing-statement";
+
+const styles = StyleSheet.create({ page: { padding: 38, fontSize: 9, color: "#27272a" }, title: { fontSize: 18, fontWeight: 700, marginBottom: 6 }, subtitle: { color: "#71717a", marginBottom: 18 }, section: { marginTop: 16 }, heading: { fontSize: 12, fontWeight: 700, marginBottom: 7, color: "#991b1b" }, row: { display: "flex", flexDirection: "row", borderBottom: "1px solid #e4e4e7", paddingVertical: 5 }, name: { width: "46%" }, amount: { width: "18%", textAlign: "right" }, total: { fontWeight: 700, backgroundColor: "#f4f4f5" }, note: { marginTop: 5, color: "#52525b", lineHeight: 1.4 } });
+
+function StatementPage({ statement }: { statement: TenantStatement }) {
+  const heating = statement.heatingDetails as { fifoRows?: Array<{ consumedLiters?: string; amountCents?: string }>; co2Grams?: string; landlordCo2Cents?: string } | null;
+  const consumedLiters = heating?.fifoRows?.reduce((sum, row) => sum + Number(row.consumedLiters || 0), 0);
+  return <Page size="A4" style={styles.page}><Text style={styles.title}>Betriebskostenabrechnung</Text><Text style={styles.subtitle}>{statement.property.street}, {statement.property.zip} {statement.property.city} · {statement.unit.name} · {statement.startDate} bis {statement.endDate}</Text><Text>{statement.tenant.salutation} {statement.tenant.firstName} {statement.tenant.lastName}</Text>
+    <View style={styles.section}><Text style={styles.heading}>Kostenartenvergleich</Text><View style={styles.row}><Text style={styles.name}>Kostenart</Text><Text style={styles.amount}>Anteil</Text><Text style={styles.amount}>Vorauszahlung</Text><Text style={styles.amount}>Differenz</Text></View>{statement.categories.map((row) => <View key={row.id} style={styles.row}><Text style={styles.name}>{row.name}</Text><Text style={styles.amount}>{centsToEuro(row.actualCents)}</Text><Text style={styles.amount}>{centsToEuro(row.prepaymentCents)}</Text><Text style={styles.amount}>{centsToEuro(row.differenceCents)}</Text></View>)}<View style={[styles.row, styles.total]}><Text style={styles.name}>Gesamt</Text><Text style={styles.amount}>{centsToEuro(statement.totalActualCents)}</Text><Text style={styles.amount}>{centsToEuro(statement.totalPrepaymentCents)}</Text><Text style={styles.amount}>{centsToEuro(statement.balanceCents)}</Text></View></View>
+    {heating && <View style={styles.section}><Text style={styles.heading}>Heizölberechnung</Text><Text style={styles.note}>Verbrauchtes Heizöl: {consumedLiters == null ? "—" : `${consumedLiters.toLocaleString("de-DE")} L`}. Die Bewertung erfolgt nach FIFO anhand der bestätigten Anfangsbestände und Lieferungen.</Text><Text style={styles.note}>CO₂-Ausstoß: {heating.co2Grams || "0"} g · CO₂-Vermieteranteil: {centsToEuro(heating.landlordCo2Cents || "0")}</Text></View>}
+    <View style={styles.section}><Text style={styles.heading}>Ergebnis</Text><Text style={{ fontSize: 14, fontWeight: 700 }}>{BigInt(statement.balanceCents) > 0n ? `Nachzahlung ${centsToEuro(statement.balanceCents)}` : BigInt(statement.balanceCents) < 0n ? `Erstattung ${centsToEuro(-BigInt(statement.balanceCents))}` : "Ausgeglichen"}</Text></View>
+  </Page>;
+}
+
+export function BillingV2Pdf({ statements }: { statements: TenantStatement[] }) { return <Document>{statements.map((statement) => <StatementPage key={statement.tenant.id} statement={statement}/>)}</Document>; }

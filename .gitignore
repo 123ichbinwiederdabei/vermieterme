@@ -42,6 +42,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+playwright-report/
+test-results/
+prisma/e2e.db
+prisma/billing-v2-*.db
 
 # private documents
 /docs

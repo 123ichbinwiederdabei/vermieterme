@@ -1,8 +1,21 @@
 import { PrismaClient } from "@prisma/client";
+import { hash } from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+    await prisma.user.upsert({
+      where: { email: process.env.ADMIN_EMAIL },
+      update: {},
+      create: {
+        email: process.env.ADMIN_EMAIL,
+        name: "Admin",
+        password: await hash(process.env.ADMIN_PASSWORD, 12),
+      },
+    });
+  }
+
   // Landlord Info
   await prisma.landlordInfo.upsert({
     where: { id: "landlord-1" },
@@ -44,6 +57,7 @@ async function main() {
       name: "Wohnung I",
       floor: "EG",
       shares: 25,
+      areaM2: "75.00",
     },
   });
 
@@ -56,6 +70,7 @@ async function main() {
       name: "Wohnung II",
       floor: "1. OG",
       shares: 35,
+      areaM2: "95.00",
     },
   });
 
@@ -100,6 +115,8 @@ async function main() {
     { id: "cat-7", name: "Wartung Heizung", distributionKey: "siehe Anlage", sortOrder: 7 },
     { id: "cat-8", name: "Grundsteuer", distributionKey: "laut Bescheid", sortOrder: 8 },
     { id: "cat-9", name: "Abfall", distributionKey: "siehe Anlage", sortOrder: 9 },
+    { id: "cat-oil", name: "Heizöl", distributionKey: "AREA", calculationType: "HEATING_OIL", sortOrder: 10 },
+    { id: "cat-electricity", name: "Strom", distributionKey: "DIRECT_CONSUMPTION", calculationType: "ELECTRICITY", sortOrder: 11 },
   ];
 
   for (const cat of categories) {
@@ -108,6 +125,18 @@ async function main() {
       update: {},
       create: cat,
     });
+  }
+
+  const heating = await prisma.heatingSystem.upsert({
+    where: { id: "heating-1" }, update: {}, create: { id: "heating-1", propertyId: property.id, name: "Ölheizung", billingRegime: "SECTION_11_EXCEPTION", exceptionReasonCode: "NO_METERING", exceptionReason: "Demo: keine Wärmeverbrauchserfassung", exceptionValidFrom: new Date("2023-01-01") },
+  });
+  for (const unitId of [unitEG.id, unitOG.id]) await prisma.heatingSystemUnit.upsert({ where: { heatingSystemId_unitId: { heatingSystemId: heating.id, unitId } }, update: {}, create: { heatingSystemId: heating.id, unitId } });
+  await prisma.heatingOilTank.upsert({ where: { id: "tank-1" }, update: {}, create: { id: "tank-1", heatingSystemId: heating.id, name: "Gemeinsamer Heizöltank", capacityLiters: "5000", deliveryDetectionThresholdLiters: "200" } });
+
+  for (const [tenantId, coldRent, prepayment] of [["tenant-1", 85000n, 20000n], ["tenant-2", 95000n, 24000n]] as const) {
+    const financial = await prisma.leaseFinancialPeriod.upsert({ where: { id: `finance-${tenantId}` }, update: {}, create: { id: `finance-${tenantId}`, tenantId, validFrom: new Date(tenantId === "tenant-1" ? "2020-01-01" : "2022-06-01"), monthlyColdRentCents: coldRent, monthlyPrepaymentCents: prepayment, reason: "Mietbeginn" } });
+    await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-oil" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-oil", monthlyAmountCents: prepayment / 2n } });
+    await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-electricity" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-electricity", monthlyAmountCents: prepayment - prepayment / 2n } });
   }
 
   // Billing Period 2023 (abgeschlossen)

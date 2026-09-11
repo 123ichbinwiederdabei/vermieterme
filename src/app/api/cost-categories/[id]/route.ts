@@ -9,7 +9,7 @@ export function PUT(
     await requireAuth();
     const { id } = await paramsPromise;
     const body = await request.json();
-    const { name, distributionKey, sortOrder } = body;
+    const { name, distributionKey, sortOrder, calculationType } = body;
 
     const category = await prisma.costCategory.update({
       where: { id },
@@ -17,6 +17,7 @@ export function PUT(
         name,
         distributionKey,
         sortOrder,
+        calculationType: calculationType || "MANUAL",
       },
     });
 

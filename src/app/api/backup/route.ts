@@ -1,155 +1,42 @@
-import { apiHandler, requireAuth, jsonOk, ApiError } from "@/lib/api-utils";
+import { ApiError, apiHandler, jsonOk, requireAuth } from "@/lib/api-utils";
+import { serializeExact } from "@/lib/billing-v2";
 import { prisma } from "@/lib/prisma";
+
+const modelReads = {
+  properties: () => prisma.property.findMany(), units: () => prisma.unit.findMany(), tenants: () => prisma.tenant.findMany(), costCategories: () => prisma.costCategory.findMany(), billingPeriods: () => prisma.billingPeriod.findMany(), costs: () => prisma.cost.findMany(), prepayments: () => prisma.prepayment.findMany(), landlordInfo: () => prisma.landlordInfo.findMany(), pdfTemplates: () => prisma.pdfTemplate.findMany(), rentChanges: () => prisma.rentChange.findMany(), vpiEntries: () => prisma.vpiEntry.findMany(), documents: () => prisma.document.findMany(),
+  heatingSystems: () => prisma.heatingSystem.findMany(), heatingSystemUnits: () => prisma.heatingSystemUnit.findMany(), heatingOilTanks: () => prisma.heatingOilTank.findMany(), heatingOilDeliveries: () => prisma.heatingOilDelivery.findMany(), oilInventoryLots: () => prisma.oilInventoryLot.findMany(), oilStockReadings: () => prisma.oilStockReading.findMany(), oilFoxDevices: () => prisma.oilFoxDevice.findMany(), oilDeliveryCandidates: () => prisma.oilDeliveryCandidate.findMany(), oilFoxSyncStates: () => prisma.oilFoxSyncState.findMany(),
+  electricityContracts: () => prisma.electricityContract.findMany(), electricityTariffs: () => prisma.electricityTariff.findMany(), electricityMeters: () => prisma.electricityMeter.findMany(), electricityReadings: () => prisma.electricityReading.findMany(), leaseFinancialPeriods: () => prisma.leaseFinancialPeriod.findMany(), prepaymentComponents: () => prisma.prepaymentComponent.findMany(), billingSnapshots: () => prisma.billingSnapshot.findMany(), costAllocations: () => prisma.costAllocation.findMany(), oilLotConsumptions: () => prisma.oilLotConsumption.findMany(),
+};
 
 export function GET() {
   return apiHandler(async () => {
     await requireAuth();
-
-    const [
-      properties,
-      units,
-      tenants,
-      costCategories,
-      billingPeriods,
-      costs,
-      prepayments,
-      landlordInfo,
-      pdfTemplates,
-      rentChanges,
-      vpiEntries,
-      documents,
-    ] = await Promise.all([
-      prisma.property.findMany(),
-      prisma.unit.findMany(),
-      prisma.tenant.findMany(),
-      prisma.costCategory.findMany(),
-      prisma.billingPeriod.findMany(),
-      prisma.cost.findMany(),
-      prisma.prepayment.findMany(),
-      prisma.landlordInfo.findMany(),
-      prisma.pdfTemplate.findMany(),
-      prisma.rentChange.findMany(),
-      prisma.vpiEntry.findMany(),
-      prisma.document.findMany(),
-    ]);
-
-    const backup = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      data: {
-        properties,
-        units,
-        tenants,
-        costCategories,
-        billingPeriods,
-        costs,
-        prepayments,
-        landlordInfo,
-        pdfTemplates,
-        rentChanges,
-        vpiEntries,
-        documents,
-      },
-    };
-
-    const date = new Date().toISOString().slice(0, 10);
-    return new Response(JSON.stringify(backup, null, 2), {
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="vermieterme-backup-${date}.json"`,
-      },
-    });
+    const entries = await Promise.all(Object.entries(modelReads).map(async ([key, read]) => [key, await read()] as const));
+    const body = serializeExact({ version: 2, exportedAt: new Date().toISOString(), data: Object.fromEntries(entries) });
+    return new Response(JSON.stringify(body, null, 2), { headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="vermieterme-backup-v2-${new Date().toISOString().slice(0, 10)}.json"` } });
   });
 }
 
-const REQUIRED_KEYS = [
-  "properties",
-  "units",
-  "tenants",
-  "costCategories",
-  "billingPeriods",
-  "costs",
-  "prepayments",
-  "landlordInfo",
-];
-
-function validateBackup(
-  body: unknown
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-): body is { version: number; data: Record<string, any[]> } {
-  if (!body || typeof body !== "object") return false;
-  const obj = body as Record<string, unknown>;
-  if (obj.version !== 1) return false;
-  if (!obj.data || typeof obj.data !== "object") return false;
-  const d = obj.data as Record<string, unknown>;
-  return REQUIRED_KEYS.every((key) => Array.isArray(d[key]));
-}
+function rows(data: Record<string, unknown>, key: string) { return Array.isArray(data[key]) ? data[key] as never[] : []; }
 
 export function POST(request: Request) {
   return apiHandler(async () => {
     await requireAuth();
-
-    const body = await request.json();
-
-    if (!validateBackup(body)) {
-      throw new ApiError("Ungültiges Backup-Format", 400);
-    }
-
-    const { data } = body;
-
-    await prisma.$transaction([
-      // Delete children first
-      prisma.document.deleteMany(),
-      prisma.cost.deleteMany(),
-      prisma.prepayment.deleteMany(),
-      prisma.tenant.deleteMany(),
-      prisma.billingPeriod.deleteMany(),
-      prisma.unit.deleteMany(),
-      prisma.property.deleteMany(),
-      prisma.costCategory.deleteMany(),
-      prisma.rentChange.deleteMany(),
-      prisma.landlordInfo.deleteMany(),
-      prisma.pdfTemplate.deleteMany(),
-      prisma.vpiEntry.deleteMany(),
-      // Create parents first
-      ...(data.properties.length > 0
-        ? [prisma.property.createMany({ data: data.properties })]
-        : []),
-      ...(data.costCategories.length > 0
-        ? [prisma.costCategory.createMany({ data: data.costCategories })]
-        : []),
-      ...(data.landlordInfo.length > 0
-        ? [prisma.landlordInfo.createMany({ data: data.landlordInfo })]
-        : []),
-      ...(data.units.length > 0
-        ? [prisma.unit.createMany({ data: data.units })]
-        : []),
-      ...(data.billingPeriods.length > 0
-        ? [prisma.billingPeriod.createMany({ data: data.billingPeriods })]
-        : []),
-      ...(data.tenants.length > 0
-        ? [prisma.tenant.createMany({ data: data.tenants })]
-        : []),
-      ...(data.costs.length > 0
-        ? [prisma.cost.createMany({ data: data.costs })]
-        : []),
-      ...(data.prepayments.length > 0
-        ? [prisma.prepayment.createMany({ data: data.prepayments })]
-        : []),
-      ...((data.pdfTemplates?.length ?? 0) > 0
-        ? [prisma.pdfTemplate.createMany({ data: data.pdfTemplates })]
-        : []),
-      ...((data.rentChanges?.length ?? 0) > 0
-        ? [prisma.rentChange.createMany({ data: data.rentChanges })]
-        : []),
-      ...((data.vpiEntries?.length ?? 0) > 0
-        ? [prisma.vpiEntry.createMany({ data: data.vpiEntries })]
-        : []),
-      ...((data.documents?.length ?? 0) > 0
-        ? [prisma.document.createMany({ data: data.documents })]
-        : []),
-    ]);
-
-    return jsonOk({ success: true, message: "Backup erfolgreich importiert" });
+    const body = await request.json() as { version?: number; data?: Record<string, unknown> };
+    if ((body.version !== 1 && body.version !== 2) || !body.data) throw new ApiError("Ungültiges Backup-Format", 400);
+    const d = body.data;
+    for (const key of ["properties", "units", "tenants", "costCategories", "billingPeriods"]) if (!Array.isArray(d[key])) throw new ApiError(`Backup-Tabelle ${key} fehlt`, 400);
+    await prisma.$transaction(async (tx) => {
+      await tx.oilLotConsumption.deleteMany(); await tx.costAllocation.deleteMany(); await tx.billingSnapshot.deleteMany(); await tx.prepaymentComponent.deleteMany(); await tx.leaseFinancialPeriod.deleteMany();
+      await tx.electricityReading.deleteMany(); await tx.electricityMeter.deleteMany(); await tx.electricityTariff.deleteMany(); await tx.electricityContract.deleteMany();
+      await tx.oilDeliveryCandidate.deleteMany(); await tx.oilStockReading.deleteMany(); await tx.oilInventoryLot.deleteMany(); await tx.heatingOilDelivery.deleteMany(); await tx.oilFoxDevice.deleteMany(); await tx.heatingOilTank.deleteMany(); await tx.heatingSystemUnit.deleteMany(); await tx.heatingSystem.deleteMany(); await tx.oilFoxSyncState.deleteMany();
+      await tx.document.deleteMany(); await tx.cost.deleteMany(); await tx.prepayment.deleteMany(); await tx.tenant.deleteMany(); await tx.billingPeriod.deleteMany(); await tx.unit.deleteMany(); await tx.property.deleteMany(); await tx.costCategory.deleteMany(); await tx.rentChange.deleteMany(); await tx.landlordInfo.deleteMany(); await tx.pdfTemplate.deleteMany(); await tx.vpiEntry.deleteMany();
+      if (rows(d, "properties").length) await tx.property.createMany({ data: rows(d, "properties") }); if (rows(d, "costCategories").length) await tx.costCategory.createMany({ data: rows(d, "costCategories") }); if (rows(d, "landlordInfo").length) await tx.landlordInfo.createMany({ data: rows(d, "landlordInfo") }); if (rows(d, "units").length) await tx.unit.createMany({ data: rows(d, "units") }); if (rows(d, "billingPeriods").length) await tx.billingPeriod.createMany({ data: rows(d, "billingPeriods") }); if (rows(d, "tenants").length) await tx.tenant.createMany({ data: rows(d, "tenants") });
+      if (rows(d, "heatingSystems").length) await tx.heatingSystem.createMany({ data: rows(d, "heatingSystems") }); if (rows(d, "heatingSystemUnits").length) await tx.heatingSystemUnit.createMany({ data: rows(d, "heatingSystemUnits") }); if (rows(d, "heatingOilTanks").length) await tx.heatingOilTank.createMany({ data: rows(d, "heatingOilTanks") }); if (rows(d, "oilFoxDevices").length) await tx.oilFoxDevice.createMany({ data: rows(d, "oilFoxDevices") }); if (rows(d, "heatingOilDeliveries").length) await tx.heatingOilDelivery.createMany({ data: rows(d, "heatingOilDeliveries") }); if (rows(d, "oilInventoryLots").length) await tx.oilInventoryLot.createMany({ data: rows(d, "oilInventoryLots") }); if (rows(d, "oilStockReadings").length) await tx.oilStockReading.createMany({ data: rows(d, "oilStockReadings") }); if (rows(d, "oilDeliveryCandidates").length) await tx.oilDeliveryCandidate.createMany({ data: rows(d, "oilDeliveryCandidates") }); if (rows(d, "oilFoxSyncStates").length) await tx.oilFoxSyncState.createMany({ data: rows(d, "oilFoxSyncStates") });
+      if (rows(d, "electricityContracts").length) await tx.electricityContract.createMany({ data: rows(d, "electricityContracts") }); if (rows(d, "electricityTariffs").length) await tx.electricityTariff.createMany({ data: rows(d, "electricityTariffs") }); if (rows(d, "electricityMeters").length) await tx.electricityMeter.createMany({ data: rows(d, "electricityMeters") }); if (rows(d, "electricityReadings").length) await tx.electricityReading.createMany({ data: rows(d, "electricityReadings") });
+      if (rows(d, "leaseFinancialPeriods").length) await tx.leaseFinancialPeriod.createMany({ data: rows(d, "leaseFinancialPeriods") }); if (rows(d, "prepaymentComponents").length) await tx.prepaymentComponent.createMany({ data: rows(d, "prepaymentComponents") }); if (rows(d, "costs").length) await tx.cost.createMany({ data: rows(d, "costs") }); if (rows(d, "prepayments").length) await tx.prepayment.createMany({ data: rows(d, "prepayments") }); if (rows(d, "billingSnapshots").length) await tx.billingSnapshot.createMany({ data: rows(d, "billingSnapshots") }); if (rows(d, "costAllocations").length) await tx.costAllocation.createMany({ data: rows(d, "costAllocations") }); if (rows(d, "oilLotConsumptions").length) await tx.oilLotConsumption.createMany({ data: rows(d, "oilLotConsumptions") });
+      if (rows(d, "pdfTemplates").length) await tx.pdfTemplate.createMany({ data: rows(d, "pdfTemplates") }); if (rows(d, "rentChanges").length) await tx.rentChange.createMany({ data: rows(d, "rentChanges") }); if (rows(d, "vpiEntries").length) await tx.vpiEntry.createMany({ data: rows(d, "vpiEntries") }); if (rows(d, "documents").length) await tx.document.createMany({ data: rows(d, "documents") });
+    });
+    return jsonOk({ success: true, version: body.version });
   });
 }

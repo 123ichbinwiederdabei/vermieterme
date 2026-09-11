@@ -15,6 +15,10 @@ export function GET(request: Request) {
             property: true,
           },
         },
+        financialPeriods: {
+          include: { components: { include: { costCategory: true } } },
+          orderBy: { validFrom: "desc" },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -47,10 +51,12 @@ export function POST(request: Request) {
       indexReferenceValue,
       indexReferenceDate,
       indexMinMonths,
+      monthlyColdRentCents,
+      monthlyPrepaymentCents,
+      prepaymentComponents,
     } = body;
 
-    const tenant = await prisma.tenant.create({
-      data: {
+    const tenantData = {
         unitId,
         salutation,
         firstName,
@@ -72,7 +78,32 @@ export function POST(request: Request) {
           ? new Date(indexReferenceDate)
           : null,
         indexMinMonths: indexMinMonths ?? 12,
-      },
+    };
+    if (monthlyColdRentCents === undefined || monthlyPrepaymentCents === undefined) {
+      return jsonCreated(await prisma.tenant.create({ data: tenantData }));
+    }
+    const tenant = await prisma.$transaction(async (tx) => {
+      const created = await tx.tenant.create({ data: tenantData });
+      {
+        const components = Array.isArray(prepaymentComponents) ? prepaymentComponents : [];
+        const componentTotal = components.reduce((sum: bigint, component: { monthlyAmountCents: string }) => sum + BigInt(component.monthlyAmountCents), 0n);
+        if (componentTotal !== BigInt(monthlyPrepaymentCents)) {
+          throw new Error("Die Summe der NK-Komponenten entspricht nicht der gesamten NK-Vorauszahlung");
+        }
+        await tx.leaseFinancialPeriod.create({ data: {
+          tenantId: created.id,
+          validFrom: new Date(moveInDate),
+          validTo: moveOutDate ? new Date(moveOutDate) : null,
+          monthlyColdRentCents: BigInt(monthlyColdRentCents),
+          monthlyPrepaymentCents: BigInt(monthlyPrepaymentCents),
+          reason: "Mietbeginn",
+          components: { create: components.map((component: { costCategoryId: string; monthlyAmountCents: string }) => ({
+            costCategoryId: component.costCategoryId,
+            monthlyAmountCents: BigInt(component.monthlyAmountCents),
+          })) },
+        }});
+      }
+      return created;
     });
 
     return jsonCreated(tenant);

@@ -1,58 +1,29 @@
 import { apiHandler, jsonOk } from "@/lib/api-utils";
 import { prisma } from "@/lib/prisma";
 import { requireTenantAuth } from "@/lib/tenant-auth";
-import { calculateBillingTotals } from "@/lib/billing";
+import { buildTenantStatement } from "@/lib/billing-statement";
 
 export function GET() {
   return apiHandler(async () => {
-    const { tenantId, unitId } = await requireTenantAuth();
-
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-      include: { unit: true },
-    });
-
-    if (!tenant) {
-      return jsonOk([]);
-    }
-
-    const billingPeriods = await prisma.billingPeriod.findMany({
-      where: { propertyId: tenant.unit.propertyId },
-      include: {
-        property: true,
-        costs: { include: { costCategory: true } },
-        prepayments: { where: { unitId } },
-        _count: { select: { costs: true } },
-      },
-      orderBy: { startDate: "desc" },
-    });
-
-    const result = billingPeriods.map((bp) => {
-      const totals = calculateBillingTotals(
-        bp.costs,
-        bp.prepayments,
-        bp.startDate.toISOString(),
-        bp.endDate.toISOString()
-      );
-
-      return {
-        id: bp.id,
-        startDate: bp.startDate,
-        endDate: bp.endDate,
-        billingDate: bp.billingDate,
-        sentDate: bp.sentDate,
-        paidDate: bp.paidDate,
-        property: {
-          street: bp.property.street,
-          zip: bp.property.zip,
-          city: bp.property.city,
-        },
-        totalUnitCosts: totals.totalUnitCosts,
-        totalPrepayment: totals.totalPrepayment,
-        difference: totals.difference,
-      };
-    });
-
-    return jsonOk(result);
+    const { tenantId } = await requireTenantAuth();
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, include: { unit: true } });
+    if (!tenant) return jsonOk([]);
+    const periods = await prisma.billingPeriod.findMany({ where: { propertyId: tenant.unit.propertyId }, orderBy: { startDate: "desc" } });
+    const statements = await Promise.all(periods.map((period) => buildTenantStatement(period.id, tenantId)));
+    return jsonOk(statements.map((statement) => ({
+      id: statement.billingPeriodId,
+      startDate: statement.startDate,
+      endDate: statement.endDate,
+      billingDate: periods.find((row) => row.id === statement.billingPeriodId)?.billingDate ?? null,
+      sentDate: periods.find((row) => row.id === statement.billingPeriodId)?.sentDate ?? null,
+      paidDate: periods.find((row) => row.id === statement.billingPeriodId)?.paidDate ?? null,
+      property: statement.property,
+      totalUnitCosts: Number(statement.totalActualCents) / 100,
+      totalPrepayment: Number(statement.totalPrepaymentCents) / 100,
+      difference: Number(BigInt(statement.totalPrepaymentCents) - BigInt(statement.totalActualCents)) / 100,
+      totalUnitCostsCents: statement.totalActualCents,
+      totalPrepaymentCents: statement.totalPrepaymentCents,
+      differenceCents: (BigInt(statement.totalPrepaymentCents) - BigInt(statement.totalActualCents)).toString(),
+    })));
   });
 }

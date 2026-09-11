@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { serializeExact } from "@/lib/billing-v2";
 
 export class ApiError extends Error {
   constructor(
@@ -37,9 +38,9 @@ export function apiHandler(
 }
 
 export function jsonOk(data: unknown, status = 200) {
-  return NextResponse.json(data, { status });
+  return NextResponse.json(serializeExact(data), { status });
 }
 
 export function jsonCreated(data: unknown) {
-  return NextResponse.json(data, { status: 201 });
+  return NextResponse.json(serializeExact(data), { status: 201 });
 }

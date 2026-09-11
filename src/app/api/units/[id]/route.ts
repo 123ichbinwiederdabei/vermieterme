@@ -9,7 +9,7 @@ export function PUT(
     await requireAuth();
     const { id } = await paramsPromise;
     const body = await request.json();
-    const { propertyId, name, floor, shares } = body;
+    const { propertyId, name, floor, shares, areaM2, ownerOccupied } = body;
 
     const unit = await prisma.unit.update({
       where: { id },
@@ -18,6 +18,8 @@ export function PUT(
         name,
         floor,
         shares,
+        areaM2: areaM2 === "" ? null : areaM2,
+        ownerOccupied: ownerOccupied === true,
       },
     });
 

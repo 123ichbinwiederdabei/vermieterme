@@ -13,7 +13,14 @@ export const SALUTATIONS_SECONDARY: ComboboxOption[] = [
   { value: "Frau", label: "Frau" },
 ];
 
-export const DISTRIBUTION_KEYS = ["MEA", "laut Bescheid", "siehe Anlage"];
+export const DISTRIBUTION_KEYS = [
+  "MEA",
+  "Wohnfläche",
+  "Direkter Verbrauch",
+  "Gleicher Anteil",
+  "Manuell",
+  "siehe Anlage",
+];
 
 export const DISTRIBUTION_KEY_OPTIONS: ComboboxOption[] = DISTRIBUTION_KEYS.map(
   (key) => ({ value: key, label: key })

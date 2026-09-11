@@ -35,6 +35,7 @@ export default function SettingsPage() {
     name: "",
     distributionKey: "MEA",
     sortOrder: 0,
+    calculationType: "MANUAL",
   });
   const [deleteCategoryId, setDeleteCategoryId] = useState<string | null>(null);
 
@@ -144,7 +145,7 @@ export default function SettingsPage() {
         body: JSON.stringify(categoryForm),
       });
       if (res.ok) {
-        setCategoryForm({ name: "", distributionKey: "MEA", sortOrder: 0 });
+        setCategoryForm({ name: "", distributionKey: "MEA", sortOrder: 0, calculationType: "MANUAL" });
         setShowNewCategoryForm(false);
         await fetchCategories();
       }
@@ -162,7 +163,7 @@ export default function SettingsPage() {
       });
       if (res.ok) {
         setEditingCategoryId(null);
-        setCategoryForm({ name: "", distributionKey: "MEA", sortOrder: 0 });
+        setCategoryForm({ name: "", distributionKey: "MEA", sortOrder: 0, calculationType: "MANUAL" });
         await fetchCategories();
       }
     } catch (error) {
@@ -310,6 +311,7 @@ export default function SettingsPage() {
       name: cat.name,
       distributionKey: cat.distributionKey,
       sortOrder: cat.sortOrder,
+      calculationType: cat.calculationType || "MANUAL",
     });
   }
 
@@ -430,7 +432,7 @@ export default function SettingsPage() {
               <p className="mb-3 text-sm font-medium text-zinc-500">
                 Bankverbindung
               </p>
-              <div className="grid gap-4 sm:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-zinc-700">
                     Bankname
@@ -566,6 +568,7 @@ export default function SettingsPage() {
                     costCategories.length > 0
                       ? Math.max(...costCategories.map((c) => c.sortOrder)) + 1
                       : 1,
+                  calculationType: "MANUAL",
                 });
               }}
               className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800"
@@ -619,6 +622,18 @@ export default function SettingsPage() {
                     searchPlaceholder="Suchen..."
                     required
                   />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-zinc-700">Berechnungsart</label>
+                  <select
+                    value={categoryForm.calculationType}
+                    onChange={(e) => setCategoryForm({ ...categoryForm, calculationType: e.target.value })}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="MANUAL">Manuell</option>
+                    <option value="HEATING_OIL">Heizöl</option>
+                    <option value="ELECTRICITY">Strom</option>
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-zinc-700">
@@ -677,6 +692,7 @@ export default function SettingsPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">
                       Verteilerschlüssel
                     </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-500">Berechnung</th>
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-500">
                       Aktionen
                     </th>
@@ -737,11 +753,7 @@ export default function SettingsPage() {
                               <button
                                 onClick={() => {
                                   setEditingCategoryId(null);
-                                  setCategoryForm({
-                                    name: "",
-                                    distributionKey: "MEA",
-                                    sortOrder: 0,
-                                  });
+                                  setCategoryForm({ name: "", distributionKey: "MEA", sortOrder: 0, calculationType: "MANUAL" });
                                 }}
                                 className="rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                               >
@@ -763,6 +775,9 @@ export default function SettingsPage() {
                           <span className="inline-flex rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700">
                             {cat.distributionKey}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-zinc-600">
+                          {cat.calculationType === "HEATING_OIL" ? "Heizöl" : cat.calculationType === "ELECTRICITY" ? "Strom" : "Manuell"}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex justify-end gap-1">

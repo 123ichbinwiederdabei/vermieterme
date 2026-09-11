@@ -8,8 +8,10 @@ const links = [
   { href: "/", label: "Dashboard" },
   { href: "/properties", label: "Objekte" },
   { href: "/tenants", label: "Mieter" },
-  { href: "/rent-changes", label: "Mietanpassungen" },
+  { href: "/rent-changes", label: "Miet- und NK-Historie" },
   { href: "/billing", label: "Abrechnungen" },
+  { href: "/heating-oil", label: "Heizöl" },
+  { href: "/electricity", label: "Strom" },
   { href: "/settings", label: "Einstellungen" },
 ];
 

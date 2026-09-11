@@ -4,13 +4,11 @@ import Credentials from "next-auth/providers/credentials";
 import Apple from "next-auth/providers/apple";
 import { hashPassword, verifyPassword } from "./password";
 import { prisma } from "./prisma";
+import { authConfig } from "./auth.config";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  ...authConfig,
   adapter: PrismaAdapter(prisma),
-  session: { strategy: "jwt" },
-  pages: {
-    signIn: "/login",
-  },
   providers: [
     ...(process.env.AUTH_APPLE_ID
       ? [
@@ -66,28 +64,4 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    authorized({ auth, request }) {
-      const { pathname } = request.nextUrl;
-
-      // Public API routes (tenant app uses its own JWT auth, health is public)
-      if (pathname.startsWith("/api/tenant-app") || pathname.startsWith("/api/health")) {
-        return true;
-      }
-
-      return !!auth?.user;
-    },
-    session({ session, token }) {
-      if (token.sub) {
-        session.user.id = token.sub;
-      }
-      return session;
-    },
-    async jwt({ token, user }) {
-      if (user) {
-        token.sub = user.id;
-      }
-      return token;
-    },
-  },
 });

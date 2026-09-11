@@ -30,6 +30,8 @@ export function GET(
             unit: true,
           },
         },
+        billingSnapshots: { orderBy: { createdAt: "desc" } },
+        costAllocations: { include: { costCategory: true, unit: true, tenant: true } },
       },
     });
 

@@ -3,6 +3,7 @@ import path from "path";
 import { writeFile, mkdir } from "fs/promises";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { apiHandler, requireAuth, jsonOk, jsonCreated, ApiError } from "@/lib/api-utils";
 
 const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
@@ -20,10 +21,12 @@ export function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const billingPeriodId = searchParams.get("billingPeriodId");
     const tenantId = searchParams.get("tenantId");
+    const heatingOilDeliveryId = searchParams.get("heatingOilDeliveryId");
 
-    const where: Record<string, string> = {};
+    const where: Prisma.DocumentWhereInput = {};
     if (billingPeriodId) where.billingPeriodId = billingPeriodId;
     if (tenantId) where.tenantId = tenantId;
+    if (heatingOilDeliveryId) where.heatingOilDelivery = { is: { id: heatingOilDeliveryId } };
 
     const documents = await prisma.document.findMany({
       where,
@@ -42,6 +45,7 @@ export function POST(request: NextRequest) {
     const file = formData.get("file") as File | null;
     const billingPeriodId = formData.get("billingPeriodId") as string | null;
     const tenantId = formData.get("tenantId") as string | null;
+    const heatingOilDeliveryId = formData.get("heatingOilDeliveryId") as string | null;
     const category = (formData.get("category") as string) || "other";
 
     if (!file) {
@@ -77,6 +81,7 @@ export function POST(request: NextRequest) {
         category,
         billingPeriodId: billingPeriodId || null,
         tenantId: tenantId || null,
+        heatingOilDelivery: heatingOilDeliveryId ? { connect: { id: heatingOilDeliveryId } } : undefined,
       },
     });
 

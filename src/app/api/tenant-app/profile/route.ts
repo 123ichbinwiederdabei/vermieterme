@@ -13,6 +13,11 @@ export function GET() {
         unit: {
           include: { property: true },
         },
+        financialPeriods: {
+          where: { supersededAt: null },
+          include: { components: { include: { costCategory: true } } },
+          orderBy: { validFrom: "desc" },
+        },
       },
     });
 
@@ -48,6 +53,8 @@ export function GET() {
         city: tenant.unit.property.city,
         totalShares: tenant.unit.property.totalShares,
       },
+      financialPeriods: tenant.financialPeriods,
+      currentFinance: tenant.financialPeriods.find((period) => period.validFrom <= new Date() && (!period.validTo || period.validTo >= new Date())) ?? null,
     });
   });
 }

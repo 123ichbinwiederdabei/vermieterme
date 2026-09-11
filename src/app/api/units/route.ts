@@ -20,7 +20,7 @@ export function POST(request: Request) {
   return apiHandler(async () => {
     await requireAuth();
     const body = await request.json();
-    const { propertyId, name, floor, shares } = body;
+    const { propertyId, name, floor, shares, areaM2, ownerOccupied } = body;
 
     const unit = await prisma.unit.create({
       data: {
@@ -28,6 +28,8 @@ export function POST(request: Request) {
         name,
         floor,
         shares,
+        areaM2: areaM2 || null,
+        ownerOccupied: ownerOccupied === true,
       },
     });
 

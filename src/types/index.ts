@@ -24,6 +24,8 @@ export interface Unit {
   name: string;
   floor: string;
   shares: number;
+  areaM2: string | null;
+  ownerOccupied: boolean;
 }
 
 export interface UnitWithTenants extends Unit {
@@ -92,6 +94,7 @@ export interface Cost {
   billingPeriodId: string;
   costCategoryId: string;
   totalAmount: number;
+  totalAmountCents?: string | null;
   unitAmount: number | null;
   reviewed: boolean;
   enabled: boolean;
@@ -116,6 +119,7 @@ export interface CostCategory {
   id: string;
   name: string;
   distributionKey: string;
+  calculationType: "MANUAL" | "HEATING_OIL" | "ELECTRICITY";
   sortOrder: number;
 }
 
@@ -181,6 +185,7 @@ export interface Document {
   id: string;
   billingPeriodId: string | null;
   tenantId: string | null;
+  heatingOilDeliveryId?: string | null;
   fileName: string;
   originalName: string;
   mimeType: string;
