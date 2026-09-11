@@ -89,46 +89,49 @@ model Unit {
 }
 
 model Tenant {
-  id                  String                 @id @default(cuid())
-  unitId              String
-  salutation          String
-  firstName           String
-  lastName            String
-  salutation2         String?
-  firstName2          String?
-  lastName2           String?
-  phone               String?
-  email               String?
-  bankName            String?
-  iban                String?
-  accountHolder       String?
-  moveInDate          DateTime
-  moveOutDate         DateTime?
-  leaseType           String                 @default("standard") // "standard", "index", "staffel"
-  indexBaseYear       Int?
-  indexReferenceValue Float?
-  indexReferenceDate  DateTime?
-  indexMinMonths      Int                    @default(12)
-  unit                Unit                   @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  documents           Document[]
-  accessToken         TenantAccessToken?
-  financialPeriods    LeaseFinancialPeriod[]
-  costAllocations     CostAllocation[]
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
+  id                     String                       @id @default(cuid())
+  unitId                 String
+  salutation             String
+  firstName              String
+  lastName               String
+  salutation2            String?
+  firstName2             String?
+  lastName2              String?
+  phone                  String?
+  email                  String?
+  bankName               String?
+  iban                   String?
+  accountHolder          String?
+  moveInDate             DateTime
+  moveOutDate            DateTime?
+  leaseType              String                       @default("standard") // "standard", "index", "staffel"
+  indexBaseYear          Int?
+  indexReferenceValue    Float?
+  indexReferenceDate     DateTime?
+  indexMinMonths         Int                          @default(12)
+  unit                   Unit                         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  documents              Document[]
+  accessToken            TenantAccessToken?
+  financialPeriods       LeaseFinancialPeriod[]
+  costAllocations        CostAllocation[]
+  costCategoryAgreements LeaseCostCategoryAgreement[]
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
 }
 
 model CostCategory {
-  id                   String                @id @default(cuid())
+  id                   String                       @id @default(cuid())
   name                 String
   distributionKey      String
-  calculationType      String                @default("MANUAL")
-  sortOrder            Int                   @default(0)
+  calculationType      String                       @default("MANUAL")
+  sortOrder            Int                          @default(0)
   costs                Cost[]
   prepaymentComponents PrepaymentComponent[]
   costAllocations      CostAllocation[]
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  invoices             CostInvoice[]
+  leaseAgreements      LeaseCostCategoryAgreement[]
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
 }
 
 model BillingPeriod {
@@ -148,6 +151,7 @@ model BillingPeriod {
   documents        Document[]
   billingSnapshots BillingSnapshot[]
   costAllocations  CostAllocation[]
+  costInvoices     CostInvoice[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 }
@@ -232,7 +236,63 @@ model Document {
   billingPeriod      BillingPeriod?      @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
   tenant             Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   heatingOilDelivery HeatingOilDelivery?
+  costInvoice        CostInvoice?        @relation("CostInvoiceDocument")
   createdAt          DateTime            @default(now())
+}
+
+// Beleggestuetzte manuelle Betriebskosten. Die Umlage wird ausschliesslich
+// in der gemeinsamen serverseitigen Billing-Engine bestimmt.
+model CostInvoice {
+  id               String            @id @default(cuid())
+  billingPeriodId  String
+  costCategoryId   String
+  supplier         String?
+  invoiceNumber    String?
+  invoiceDate      DateTime?
+  serviceDate      DateTime?
+  totalAmountCents BigInt
+  note             String?
+  documentId       String?           @unique
+  billingPeriod    BillingPeriod     @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  costCategory     CostCategory      @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  document         Document?         @relation("CostInvoiceDocument", fields: [documentId], references: [id], onDelete: SetNull)
+  lines            CostInvoiceLine[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([billingPeriodId, costCategoryId])
+}
+
+model CostInvoiceLine {
+  id                      String      @id @default(cuid())
+  costInvoiceId           String
+  description             String
+  amountCents             BigInt
+  classification          String
+  confirmedRunningExpense Boolean     @default(false)
+  costInvoice             CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+}
+
+// The landlord's documented check of a contractual operating-cost agreement.
+// It documents the decision and does not replace legal advice.
+model LeaseCostCategoryAgreement {
+  id                 String       @id @default(cuid())
+  tenantId           String
+  costCategoryId     String
+  validFrom          DateTime
+  validTo            DateTime?
+  confirmedAt        DateTime     @default(now())
+  confirmedBy        String
+  contractDocumentId String?
+  note               String?
+  tenant             Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  costCategory       CostCategory @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([tenantId, costCategoryId, validFrom])
 }
 
 model TenantAccessToken {
@@ -312,6 +372,7 @@ model HeatingOilTank {
   stockReadings                    OilStockReading[]
   oilFoxDevices                    OilFoxDevice[]
   deliveryCandidates               OilDeliveryCandidate[]
+  oilFoxCsvImports                 OilFoxCsvImport[]
   createdAt                        DateTime               @default(now())
   updatedAt                        DateTime               @updatedAt
 
@@ -403,8 +464,10 @@ model OilStockReading {
   confirmed                  Boolean                @default(false)
   note                       String?
   documentId                 String?
+  oilFoxCsvImportId          String?
   tank                       HeatingOilTank         @relation(fields: [tankId], references: [id], onDelete: Cascade)
   oilFoxDevice               OilFoxDevice?          @relation(fields: [oilFoxDeviceId], references: [id], onDelete: SetNull)
+  oilFoxCsvImport            OilFoxCsvImport?       @relation(fields: [oilFoxCsvImportId], references: [id], onDelete: SetNull)
   previousDeliveryCandidates OilDeliveryCandidate[] @relation("BeforeMeasurement")
   nextDeliveryCandidates     OilDeliveryCandidate[] @relation("AfterMeasurement")
   createdAt                  DateTime               @default(now())
@@ -428,10 +491,32 @@ model OilFoxDevice {
   apiWarning        String?
   tank              HeatingOilTank?   @relation(fields: [tankId], references: [id], onDelete: SetNull)
   readings          OilStockReading[]
+  csvImports        OilFoxCsvImport[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   @@unique([tankId])
+}
+
+// Auditable, idempotent CSV upload reference. Readings remain uniquely
+// identified by OilFox device and measurement timestamp.
+model OilFoxCsvImport {
+  id                String            @id @default(cuid())
+  tankId            String
+  deviceId          String
+  fileName          String
+  fileHash          String
+  importedRows      Int               @default(0)
+  skippedDuplicates Int               @default(0)
+  invalidRows       Int               @default(0)
+  warningsJson      String            @default("[]")
+  importedAt        DateTime          @default(now())
+  tank              HeatingOilTank    @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  device            OilFoxDevice      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  readings          OilStockReading[]
+
+  @@unique([tankId, deviceId, fileHash])
+  @@index([tankId, importedAt])
 }
 
 model OilDeliveryCandidate {

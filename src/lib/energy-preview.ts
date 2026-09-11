@@ -13,9 +13,10 @@ import {
 } from "@/lib/energy-billing";
 import { fromScaledInteger, serializeExact } from "@/lib/billing-v2";
 import { ApiError } from "@/lib/api-utils";
+import { buildSmallWastewaterPreview } from "@/lib/cost-invoice-billing";
 
 export interface EnergyPreview {
-  kind: "HEATING_OIL" | "ELECTRICITY";
+  kind: "HEATING_OIL" | "ELECTRICITY" | "SMALL_WASTEWATER";
   billingPeriodId: string;
   costCategoryId: string;
   totalAmountCents: string;
@@ -322,5 +323,6 @@ export async function buildElectricityPreview(
 export async function buildEnergyPreview(kind: string, billingPeriodId: string, costCategoryId: string) {
   if (kind === "HEATING_OIL") return buildHeatingOilPreview(billingPeriodId, costCategoryId);
   if (kind === "ELECTRICITY") return buildElectricityPreview(billingPeriodId, costCategoryId);
+  if (kind === "SMALL_WASTEWATER") return buildSmallWastewaterPreview(billingPeriodId, costCategoryId);
   throw new ApiError("Unbekannte Energie-Kostenart", 400);
 }

@@ -286,7 +286,8 @@ export default function BillingDetailPage() {
 
   async function previewEnergy(category: CostCategory) {
     setEnergyBusy(category.id); setSaveStatus(null);
-    const response = await fetch(`/api/billing-periods/${id}/energy-preview?kind=${category.calculationType}&costCategoryId=${category.id}`);
+    const kind = category.name === "Entwässerung – Kleinkläranlage" ? "SMALL_WASTEWATER" : category.calculationType;
+    const response = await fetch(`/api/billing-periods/${id}/energy-preview?kind=${kind}&costCategoryId=${category.id}`);
     const data = await response.json(); setEnergyBusy(null);
     if (!response.ok) { setSaveStatus(data.error || "Vorschau fehlgeschlagen"); return; }
     setEnergyPreviews((current) => ({ ...current, [category.id]: data }));
@@ -294,7 +295,8 @@ export default function BillingDetailPage() {
 
   async function applyEnergy(category: CostCategory) {
     setEnergyBusy(category.id); setSaveStatus(null);
-    const response = await fetch(`/api/billing-periods/${id}/energy-preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: category.calculationType, costCategoryId: category.id }) });
+    const kind = category.name === "Entwässerung – Kleinkläranlage" ? "SMALL_WASTEWATER" : category.calculationType;
+    const response = await fetch(`/api/billing-periods/${id}/energy-preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, costCategoryId: category.id }) });
     const data = await response.json(); setEnergyBusy(null);
     if (!response.ok) { setSaveStatus(data.error || "Übernahme fehlgeschlagen"); return; }
     setSaveStatus("Gespeichert"); await fetchData();
@@ -575,7 +577,7 @@ export default function BillingDetailPage() {
           </div>
         )}
 
-        {costCategories.some((category) => category.calculationType !== "MANUAL") && <section className="mb-8"><h2 className="mb-4 text-lg font-semibold text-zinc-900">Automatische Energieabrechnung</h2><div className="space-y-4">{costCategories.filter((category) => category.calculationType !== "MANUAL").map((category) => { const preview = energyPreviews[category.id]; return <div key={category.id} className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-zinc-900">{category.name}</h3><p className="text-sm text-zinc-500">{category.calculationType === "HEATING_OIL" ? "Tankstände → FIFO-Verbrauch → Flächen-/Verbrauchsverteilung" : "Zählerintervalle → Tarifperioden → tatsächlicher Verbrauch"}</p></div><button disabled={energyBusy === category.id} onClick={() => void previewEnergy(category)} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">Vorschau berechnen</button></div>{preview && <div className="mt-4"><div className="grid gap-3 sm:grid-cols-4"><Metric label="Gesamtkosten" value={centsToEuro(preview.totalAmountCents)}/><Metric label="Mieteranteile" value={centsToEuro(preview.tenantAmountCents)}/><Metric label="Vermieteranteil" value={centsToEuro(preview.landlordAmountCents)}/><Metric label="Leerstand" value={centsToEuro(preview.vacancyAmountCents)}/></div>{preview.blockers.map((row) => <p key={row} className="mt-2 rounded-lg bg-red-50 p-2 text-sm text-red-700">Blocker: {row}</p>)}{preview.warnings.map((row) => <p key={row} className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-700">Warnung: {row}</p>)}<div className="mt-3 space-y-1">{preview.allocations.map((row, index) => <p key={`${row.unitId}-${row.tenantId}-${index}`} className="text-sm text-zinc-600">{row.calculationBasis}: {centsToEuro(row.amountCents)}</p>)}</div><button disabled={preview.blockers.length > 0 || energyBusy === category.id} onClick={() => void applyEnergy(category)} className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50">Unveränderlich übernehmen</button></div>}</div>; })}</div></section>}
+        {costCategories.some((category) => category.calculationType !== "MANUAL" || category.name === "Entwässerung – Kleinkläranlage") && <section className="mb-8"><h2 className="mb-4 text-lg font-semibold text-zinc-900">Automatische Energieabrechnung</h2><div className="space-y-4">{costCategories.filter((category) => category.calculationType !== "MANUAL" || category.name === "Entwässerung – Kleinkläranlage").map((category) => { const preview = energyPreviews[category.id]; const wastewater = category.name === "Entwässerung – Kleinkläranlage"; return <div key={category.id} className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold text-zinc-900">{category.name}</h3><p className="text-sm text-zinc-500">{wastewater ? "Rechnungszeilen → Vertragsprüfung → Wohnflächenverteilung" : category.calculationType === "HEATING_OIL" ? "Tankstände → FIFO-Verbrauch → Flächen-/Verbrauchsverteilung" : "Zählerintervalle → Tarifperioden → tatsächlicher Verbrauch"}</p></div><button disabled={energyBusy === category.id} onClick={() => void previewEnergy(category)} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">Vorschau berechnen</button></div>{wastewater && <p className="mt-2 text-sm text-zinc-500">Rechnungen und Vertragsfreigaben werden über die Kostenart-Verwaltung erfasst.</p>}{preview && <div className="mt-4"><div className="grid gap-3 sm:grid-cols-4"><Metric label="Gesamtkosten" value={centsToEuro(preview.totalAmountCents)}/><Metric label="Mieteranteile" value={centsToEuro(preview.tenantAmountCents)}/><Metric label="Vermieteranteil" value={centsToEuro(preview.landlordAmountCents)}/><Metric label="Leerstand" value={centsToEuro(preview.vacancyAmountCents)}/></div>{preview.blockers.map((row) => <p key={row} className="mt-2 rounded-lg bg-red-50 p-2 text-sm text-red-700">Blocker: {row}</p>)}{preview.warnings.map((row) => <p key={row} className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-700">Warnung: {row}</p>)}<div className="mt-3 space-y-1">{preview.allocations.map((row, index) => <p key={`${row.unitId}-${row.tenantId}-${index}`} className="text-sm text-zinc-600">{row.calculationBasis}: {centsToEuro(row.amountCents)}</p>)}</div><button disabled={preview.blockers.length > 0 || energyBusy === category.id} onClick={() => void applyEnergy(category)} className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50">Unveränderlich übernehmen</button></div>}</div>; })}</div></section>}
 
         {/* Section 1: Kosten */}
         <section className="mb-8">
@@ -618,6 +620,7 @@ export default function BillingDetailPage() {
                 </thead>
                 <tbody className="divide-y divide-zinc-200">
                   {costCategories.map((cat) => {
+                    const isInvoiceDriven = cat.name === "Entwässerung – Kleinkläranlage";
                     const costVal = costValues[cat.id] || DEFAULT_COST_VALUE;
                     const enabled = costVal.enabled !== false;
                     const effectiveKey =
@@ -733,7 +736,7 @@ export default function BillingDetailPage() {
                               type="number"
                               step="0.01"
                               value={costVal.totalAmount}
-                              disabled={!enabled}
+                              disabled={!enabled || isInvoiceDriven}
                               onChange={(e) =>
                                 handleCostChange(
                                   cat.id,
@@ -741,7 +744,7 @@ export default function BillingDetailPage() {
                                   e.target.value
                                 )
                               }
-                              placeholder="0,00"
+                              placeholder={isInvoiceDriven ? "Aus Rechnungen" : "0,00"}
                               className="w-32 rounded-lg border border-zinc-300 px-3 py-2 text-right text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 disabled:bg-zinc-100 disabled:text-zinc-400"
                             />
                           </div>

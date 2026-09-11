@@ -14,6 +14,7 @@ interface DocumentUploadProps {
   billingPeriodId?: string;
   tenantId?: string;
   heatingOilDeliveryId?: string;
+  costInvoiceId?: string;
   category?: string;
   label?: string;
   accept?: string;
@@ -23,6 +24,7 @@ export function DocumentUpload({
   billingPeriodId,
   tenantId,
   heatingOilDeliveryId,
+  costInvoiceId,
   category = "other",
   label = "Dokument hochladen",
   accept = ".pdf,.jpg,.jpeg,.png,.webp",
@@ -37,6 +39,7 @@ export function DocumentUpload({
     if (billingPeriodId) params.set("billingPeriodId", billingPeriodId);
     if (tenantId) params.set("tenantId", tenantId);
     if (heatingOilDeliveryId) params.set("heatingOilDeliveryId", heatingOilDeliveryId);
+    if (costInvoiceId) params.set("costInvoiceId", costInvoiceId);
 
     try {
       const res = await fetch(`/api/documents?${params}`);
@@ -51,7 +54,7 @@ export function DocumentUpload({
     } catch (error) {
       console.error("Failed to fetch documents:", error);
     }
-  }, [billingPeriodId, tenantId, heatingOilDeliveryId, category]);
+  }, [billingPeriodId, tenantId, heatingOilDeliveryId, costInvoiceId, category]);
 
   useEffect(() => {
     fetchDocuments();
@@ -69,6 +72,7 @@ export function DocumentUpload({
       if (billingPeriodId) formData.append("billingPeriodId", billingPeriodId);
       if (tenantId) formData.append("tenantId", tenantId);
       if (heatingOilDeliveryId) formData.append("heatingOilDeliveryId", heatingOilDeliveryId);
+      if (costInvoiceId) formData.append("costInvoiceId", costInvoiceId);
 
       const res = await fetch("/api/documents", {
         method: "POST",

@@ -22,11 +22,13 @@ export function GET(request: NextRequest) {
     const billingPeriodId = searchParams.get("billingPeriodId");
     const tenantId = searchParams.get("tenantId");
     const heatingOilDeliveryId = searchParams.get("heatingOilDeliveryId");
+    const costInvoiceId = searchParams.get("costInvoiceId");
 
     const where: Prisma.DocumentWhereInput = {};
     if (billingPeriodId) where.billingPeriodId = billingPeriodId;
     if (tenantId) where.tenantId = tenantId;
     if (heatingOilDeliveryId) where.heatingOilDelivery = { is: { id: heatingOilDeliveryId } };
+    if (costInvoiceId) where.costInvoice = { is: { id: costInvoiceId } };
 
     const documents = await prisma.document.findMany({
       where,
@@ -46,6 +48,7 @@ export function POST(request: NextRequest) {
     const billingPeriodId = formData.get("billingPeriodId") as string | null;
     const tenantId = formData.get("tenantId") as string | null;
     const heatingOilDeliveryId = formData.get("heatingOilDeliveryId") as string | null;
+    const costInvoiceId = formData.get("costInvoiceId") as string | null;
     const category = (formData.get("category") as string) || "other";
 
     if (!file) {
@@ -82,6 +85,7 @@ export function POST(request: NextRequest) {
         billingPeriodId: billingPeriodId || null,
         tenantId: tenantId || null,
         heatingOilDelivery: heatingOilDeliveryId ? { connect: { id: heatingOilDeliveryId } } : undefined,
+        costInvoice: costInvoiceId ? { connect: { id: costInvoiceId } } : undefined,
       },
     });
 

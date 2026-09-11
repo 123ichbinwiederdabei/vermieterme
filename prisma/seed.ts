@@ -118,6 +118,7 @@ async function main() {
     { id: "cat-oil", name: "Heizöl", distributionKey: "AREA", calculationType: "HEATING_OIL", sortOrder: 10 },
     { id: "cat-electricity", name: "Strom", distributionKey: "DIRECT_CONSUMPTION", calculationType: "ELECTRICITY", sortOrder: 11 },
     { id: "cat-other-operating-costs", name: "Sonstige Betriebskosten", distributionKey: "siehe Anlage", calculationType: "MANUAL", sortOrder: 12 },
+    { id: "cat-small-wastewater", name: "Entwässerung – Kleinkläranlage", distributionKey: "AREA", calculationType: "MANUAL", sortOrder: 13 },
   ];
 
   for (const cat of categories) {
@@ -138,6 +139,7 @@ async function main() {
     const financial = await prisma.leaseFinancialPeriod.upsert({ where: { id: `finance-${tenantId}` }, update: {}, create: { id: `finance-${tenantId}`, tenantId, validFrom: new Date(tenantId === "tenant-1" ? "2020-01-01" : "2022-06-01"), monthlyColdRentCents: coldRent, monthlyPrepaymentCents: prepayment, reason: "Mietbeginn" } });
     await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-oil" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-oil", monthlyAmountCents: prepayment / 2n } });
     await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-electricity" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-electricity", monthlyAmountCents: prepayment - prepayment / 2n } });
+    await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-small-wastewater" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-small-wastewater", monthlyAmountCents: 0n } });
   }
 
   // Billing Period 2023 (abgeschlossen)
