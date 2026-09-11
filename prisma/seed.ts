@@ -117,6 +117,7 @@ async function main() {
     { id: "cat-9", name: "Abfall", distributionKey: "siehe Anlage", sortOrder: 9 },
     { id: "cat-oil", name: "Heizöl", distributionKey: "AREA", calculationType: "HEATING_OIL", sortOrder: 10 },
     { id: "cat-electricity", name: "Strom", distributionKey: "DIRECT_CONSUMPTION", calculationType: "ELECTRICITY", sortOrder: 11 },
+    { id: "cat-other-operating-costs", name: "Sonstige Betriebskosten", distributionKey: "siehe Anlage", calculationType: "MANUAL", sortOrder: 12 },
   ];
 
   for (const cat of categories) {
