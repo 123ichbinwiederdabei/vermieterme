@@ -114,8 +114,26 @@ export function POST(request: Request) {
           name: requiredString(body.name, "Tankbezeichnung"),
           capacityLiters: body.capacityLiters ? decimalString(body.capacityLiters, "Tankkapazität", false) : null,
           deliveryDetectionThresholdLiters: decimalString(body.deliveryDetectionThresholdLiters ?? "200", "Liefererkennung", false),
+          location: optionalText(body.location), manufacturer: optionalText(body.manufacturer), model: optionalText(body.model), serialNumber: optionalText(body.serialNumber), tankType: optionalText(body.tankType), material: optionalText(body.material),
+          lengthMm: optionalDecimal(body.lengthMm, "Länge"), widthMm: optionalDecimal(body.widthMm, "Breite"), heightMm: optionalDecimal(body.heightMm, "Höhe"), diameterMm: optionalDecimal(body.diameterMm, "Durchmesser"), usableVolumeLiters: optionalDecimal(body.usableVolumeLiters, "Nutzvolumen"), measurementNotes: optionalText(body.measurementNotes), notes: optionalText(body.notes),
         },
       }));
+    }
+
+    if (action === "updateTank") {
+      const id = requiredString(body.id, "Tank");
+      const existing = await prisma.heatingOilTank.findUnique({ where: { id }, include: { stockReadings: { where: { quantityLiters: { not: null } } } } });
+      if (!existing) throw new ApiError("Tank nicht gefunden", 404);
+      const capacityLiters = body.capacityLiters === "" || body.capacityLiters == null ? null : decimalString(body.capacityLiters, "Tankkapazität", false);
+      if (capacityLiters && existing.stockReadings.some((reading) => reading.quantityLiters && toScaledInteger(reading.quantityLiters.toString()) > toScaledInteger(capacityLiters))) throw new ApiError("Die neue Tankkapazität liegt unter einem vorhandenen Tankstand.", 400);
+      const usableVolumeLiters = optionalDecimal(body.usableVolumeLiters, "Nutzvolumen");
+      if (capacityLiters && usableVolumeLiters && toScaledInteger(usableVolumeLiters) > toScaledInteger(capacityLiters)) throw new ApiError("Das Nutzvolumen darf die Tankkapazität nicht überschreiten.", 400);
+      const tank = await prisma.$transaction(async (tx) => {
+        const updated = await tx.heatingOilTank.update({ where: { id }, data: { name: requiredString(body.name, "Tankbezeichnung"), capacityLiters, deliveryDetectionThresholdLiters: decimalString(body.deliveryDetectionThresholdLiters ?? existing.deliveryDetectionThresholdLiters.toString(), "Liefererkennung", false), location: optionalText(body.location), manufacturer: optionalText(body.manufacturer), model: optionalText(body.model), serialNumber: optionalText(body.serialNumber), tankType: optionalText(body.tankType), material: optionalText(body.material), lengthMm: optionalDecimal(body.lengthMm, "Länge"), widthMm: optionalDecimal(body.widthMm, "Breite"), heightMm: optionalDecimal(body.heightMm, "Höhe"), diameterMm: optionalDecimal(body.diameterMm, "Durchmesser"), usableVolumeLiters, measurementNotes: optionalText(body.measurementNotes), notes: optionalText(body.notes) } });
+        await tx.billingSnapshot.updateMany({ where: { billingPeriod: { propertyId: (await tx.heatingSystem.findUnique({ where: { id: existing.heatingSystemId } }))!.propertyId }, kind: "HEATING_OIL", status: "APPLIED" }, data: { status: "STALE" } });
+        return updated;
+      });
+      return jsonOk(tank);
     }
 
     if (action === "createOpeningLot") {
@@ -228,3 +246,6 @@ export function POST(request: Request) {
     throw new ApiError("Unbekannte Aktion", 400);
   });
 }
+
+function optionalText(value: unknown): string | null { const text = typeof value === "string" ? value.trim() : ""; return text || null; }
+function optionalDecimal(value: unknown, label: string): string | null { return value === "" || value == null ? null : decimalString(value, label, false); }

@@ -39,6 +39,9 @@ export function POST(request: Request) {
       throw new ApiError("Das Enddatum muss nach dem Beginndatum liegen", 400);
     }
 
+    const closing = await prisma.externalBillingClosing.findFirst({ where: { propertyId, closingDate: { gte: start } }, orderBy: { closingDate: "desc" } });
+    if (closing) throw new ApiError(`Für dieses Objekt ist ein externer Abschluss bis ${closing.closingDate.toLocaleDateString("de-DE")} dokumentiert. Neue Abrechnungen dürfen erst am Folgetag beginnen.`, 409);
+
     // Check for overlapping billing periods for the same property
     const overlapping = await prisma.billingPeriod.findFirst({
       where: {

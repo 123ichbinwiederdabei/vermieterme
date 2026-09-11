@@ -11,6 +11,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
     },
+    externalBillingClosing: {
+      findFirst: vi.fn(),
+    },
     property: {
       findUnique: vi.fn(),
     },
@@ -66,6 +69,7 @@ describe("POST /api/billing-periods", () => {
     vi.clearAllMocks();
     // Default: no overlapping period, property exists with units
     vi.mocked(prisma.billingPeriod.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.externalBillingClosing.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.property.findUnique).mockResolvedValue({
       id: "p1",
       _count: { units: 2 },

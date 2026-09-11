@@ -62,6 +62,7 @@ model Property {
   totalShares          Int                   @default(100)
   units                Unit[]
   billingPeriods       BillingPeriod[]
+  externalBillings     ExternalBillingClosing[]
   heatingSystems       HeatingSystem[]
   electricityContracts ElectricityContract[]
   electricityMeters    ElectricityMeter[]
@@ -115,6 +116,7 @@ model Tenant {
   financialPeriods       LeaseFinancialPeriod[]
   costAllocations        CostAllocation[]
   costCategoryAgreements LeaseCostCategoryAgreement[]
+  externalBillings       ExternalBillingClosingTenant[]
   createdAt              DateTime                     @default(now())
   updatedAt              DateTime                     @updatedAt
 }
@@ -366,6 +368,19 @@ model HeatingOilTank {
   name                             String
   capacityLiters                   Decimal?
   deliveryDetectionThresholdLiters Decimal                @default(200)
+  location                         String?
+  manufacturer                     String?
+  model                            String?
+  serialNumber                     String?
+  tankType                         String?
+  material                         String?
+  lengthMm                         Decimal?
+  widthMm                          Decimal?
+  heightMm                         Decimal?
+  diameterMm                       Decimal?
+  usableVolumeLiters               Decimal?
+  measurementNotes                 String?
+  notes                            String?
   heatingSystem                    HeatingSystem          @relation(fields: [heatingSystemId], references: [id], onDelete: Cascade)
   deliveries                       HeatingOilDelivery[]
   inventoryLots                    OilInventoryLot[]
@@ -459,6 +474,10 @@ model OilStockReading {
   batteryLevel               String?
   validationError            String?
   distanceCm                 Decimal?
+  meteringStatus             String?
+  manuallyInvalidated        Boolean?
+  meteringType               String?
+  signalStrength             String?
   method                     String                 @default("MANUAL")
   source                     String                 @default("MANUAL")
   confirmed                  Boolean                @default(false)
@@ -571,6 +590,9 @@ model ElectricityTariff {
   contractId            String
   validFrom             DateTime
   validTo               DateTime?
+  billingValidFrom      DateTime?
+  billingValidTo        DateTime?
+  billingEffectiveReason String?
   priceCentsPerKwh      Int
   monthlyBasePriceCents BigInt
   name                  String?
@@ -610,8 +632,50 @@ model ElectricityReading {
   note        String?
   meter       ElectricityMeter @relation(fields: [meterId], references: [id], onDelete: Cascade)
   createdAt   DateTime         @default(now())
+  audits      ElectricityReadingAudit[]
 
   @@unique([meterId, readingDate])
+}
+
+// An externally completed accounting period without invented costs or a
+// fabricated start date. It is intentionally immutable after creation.
+model ExternalBillingClosing {
+  id          String                         @id @default(cuid())
+  propertyId  String
+  closingDate DateTime
+  note        String?
+  createdBy   String?
+  property    Property                       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenants     ExternalBillingClosingTenant[]
+  createdAt   DateTime                       @default(now())
+
+  @@unique([propertyId, closingDate])
+  @@index([propertyId, closingDate])
+}
+
+model ExternalBillingClosingTenant {
+  closingId String
+  tenantId  String
+  closing   ExternalBillingClosing @relation(fields: [closingId], references: [id], onDelete: Cascade)
+  tenant    Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([closingId, tenantId])
+  @@index([tenantId])
+}
+
+// Every correction of a cumulative meter reading is retained as an audit
+// record. It is deliberately separate from the mutable current reading.
+model ElectricityReadingAudit {
+  id              String              @id @default(cuid())
+  readingId       String?
+  meterId         String
+  action          String
+  previousJson    String
+  reason          String
+  createdAt       DateTime            @default(now())
+  reading         ElectricityReading? @relation(fields: [readingId], references: [id], onDelete: SetNull)
+
+  @@index([meterId, createdAt])
 }
 
 model LeaseFinancialPeriod {

@@ -133,6 +133,13 @@ export default function DashboardScreen() {
           </Text>
         </View>
       )}
+      {profile?.externalBillings?.map((closing) => (
+        <View key={closing.id} style={styles.card}>
+          <Text style={styles.cardLabel}>Abrechnungsarchiv</Text>
+          <Text style={styles.cardTitle}>Extern erledigt bis {new Date(closing.closingDate).toLocaleDateString("de-DE")}</Text>
+          <Text style={styles.emptyText}>{closing.note || "Für diesen Abschluss wurden keine Kostenwerte nacherfasst."}</Text>
+        </View>
+      ))}
     </ScrollView>
   );
 }

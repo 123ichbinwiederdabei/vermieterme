@@ -222,17 +222,21 @@ export async function buildElectricityPreview(
 
   for (const contract of period.property.electricityContracts) {
     let contractBase = 0n;
-    const activeTariffs = contract.tariffs.filter((tariff) => intersect(tariff.validFrom, tariff.validTo ?? period.endDate, period.startDate, period.endDate));
+    // Contractual validity and settlement validity are intentionally distinct
+    // when a tariff change could not be measured on its contractual date.
+    const settlementStart = (tariff: typeof contract.tariffs[number]) => tariff.billingValidFrom ?? tariff.validFrom;
+    const settlementEnd = (tariff: typeof contract.tariffs[number]) => tariff.billingValidTo ?? tariff.validTo ?? period.endDate;
+    const activeTariffs = contract.tariffs.filter((tariff) => intersect(settlementStart(tariff), settlementEnd(tariff), period.startDate, period.endDate));
     if (activeTariffs.length === 0) blockers.push(`Für ${contract.provider} fehlt ein Tarif im Abrechnungszeitraum.`);
     for (const tariff of activeTariffs) {
-      const range = intersect(tariff.validFrom, tariff.validTo ?? period.endDate, period.startDate, period.endDate);
+      const range = intersect(settlementStart(tariff), settlementEnd(tariff), period.startDate, period.endDate);
       if (range) { const amount = prorateMonthlyCents(tariff.monthlyBasePriceCents, range.start, range.end); contractBase += amount; totalBase += amount; }
     }
     for (const meter of contract.meters.filter((row) => row.role !== "INFORMATIONAL_TOTAL")) {
       const boundaries = new Map<string, Date>();
       boundaries.set(isoDay(period.startDate), period.startDate);
       boundaries.set(isoDay(period.endDate), period.endDate);
-      for (const tariff of activeTariffs) if (tariff.validFrom > period.startDate && tariff.validFrom < period.endDate) boundaries.set(isoDay(tariff.validFrom), tariff.validFrom);
+      for (const tariff of activeTariffs) if (settlementStart(tariff) > period.startDate && settlementStart(tariff) < period.endDate) boundaries.set(isoDay(settlementStart(tariff)), settlementStart(tariff));
       if (meter.unitId) {
         const unit = period.property.units.find((row) => row.id === meter.unitId);
         for (const tenant of unit?.tenants ?? []) {
@@ -247,7 +251,11 @@ export async function buildElectricityPreview(
       for (let index = 0; index < dates.length - 1; index += 1) {
         const start = dates[index];
         const end = dates[index + 1];
-        const tariff = activeTariffs.find((row) => row.validFrom <= start && (!row.validTo || row.validTo >= end));
+        // A reading on the next effective date closes the preceding interval;
+        // the preceding tariff therefore needs to cover the calendar day
+        // before that boundary, not the boundary itself.
+        const priorCalendarDay = new Date(end); priorCalendarDay.setDate(priorCalendarDay.getDate() - 1);
+        const tariff = activeTariffs.find((row) => settlementStart(row) <= start && settlementEnd(row) >= priorCalendarDay);
         if (!tariff) {
           blockers.push(`Tariflücke für Zähler ${meter.meterNumber} ab ${isoDay(start)}.`);
           continue;
@@ -265,7 +273,7 @@ export async function buildElectricityPreview(
           } else if (meter.role === "COMMON_ELECTRICITY") {
             commonAmount += result.amountCents;
           }
-          intervalDetails.push({ meterId: meter.id, meterNumber: meter.meterNumber, start: isoDay(start), end: isoDay(end), consumptionKwh: result.consumptionKwh, priceCentsPerKwh: tariff.priceCentsPerKwh, amountCents: result.amountCents.toString() });
+          intervalDetails.push({ meterId: meter.id, meterNumber: meter.meterNumber, start: isoDay(start), end: isoDay(end), consumptionKwh: result.consumptionKwh, priceCentsPerKwh: tariff.priceCentsPerKwh, contractValidFrom: isoDay(tariff.validFrom), billingValidFrom: isoDay(settlementStart(tariff)), billingEffectiveReason: tariff.billingEffectiveReason, amountCents: result.amountCents.toString() });
         } catch (error) {
           blockers.push(error instanceof Error ? `${meter.meterNumber}: ${error.message}` : `${meter.meterNumber}: Berechnung fehlgeschlagen.`);
         }

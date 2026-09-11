@@ -14,25 +14,29 @@ test("admin completes heating-oil billing and opens the shared PDF", async ({ pa
   await expect(page.getByRole("heading", { name: "Heizöl", exact: true })).toBeVisible();
   await expect(page.getByText("OilFox-Status")).toBeVisible();
 
-  await page.getByLabel("Tank").nth(0).selectOption("tank-1");
-  await page.getByLabel("Datum", { exact: true }).fill("2024-01-01");
-  await page.getByLabel("Menge (L)").nth(0).fill("1000");
-  await page.getByLabel("Bestandswert (€)").fill("1000.00");
-  await page.getByRole("button", { name: "Speichern", exact: true }).nth(1).click();
+  const openingForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Anfangsbestand" }) });
+  const deliveryForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Heizöllieferung" }) });
+  const readingForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Tankstand erfassen" }) });
 
-  await page.getByLabel("Tank").nth(1).selectOption("tank-1");
-  await page.getByLabel("Lieferdatum").fill("2024-06-01");
-  await page.getByLabel("Menge (L)").nth(1).fill("1000");
-  await page.getByLabel("Gesamtbetrag (€)").fill("1200.00");
-  await page.getByLabel("Lieferant").fill("E2E Energie");
-  await page.getByLabel("Rechnungsnummer").fill("E2E-2024");
-  await page.getByRole("button", { name: "Speichern", exact: true }).nth(2).click();
+  await openingForm.getByLabel("Tank").selectOption("tank-1");
+  await openingForm.getByLabel("Datum", { exact: true }).fill("2024-01-01");
+  await openingForm.getByLabel("Menge (L)").fill("1000");
+  await openingForm.getByLabel("Bestandswert (€)").fill("1000.00");
+  await openingForm.getByRole("button", { name: "Speichern", exact: true }).click();
+
+  await deliveryForm.getByLabel("Tank").selectOption("tank-1");
+  await deliveryForm.getByLabel("Lieferdatum").fill("2024-06-01");
+  await deliveryForm.getByLabel("Menge (L)").fill("1000");
+  await deliveryForm.getByLabel("Gesamtbetrag (€)").fill("1200.00");
+  await deliveryForm.getByLabel("Lieferant").fill("E2E Energie");
+  await deliveryForm.getByLabel("Rechnungsnummer").fill("E2E-2024");
+  await deliveryForm.getByRole("button", { name: "Speichern", exact: true }).click();
 
   for (const [date, liters] of [["2024-01-01", "1000"], ["2024-12-31", "500"]]) {
-    await page.getByLabel("Tank").nth(2).selectOption("tank-1");
-    await page.getByLabel("Ablesedatum").fill(date);
-    await page.getByLabel("Tankstand (l)").fill(liters);
-    await page.getByRole("button", { name: "Speichern", exact: true }).nth(3).click();
+    await readingForm.getByLabel("Tank", { exact: true }).selectOption("tank-1");
+    await readingForm.getByLabel("Ablesedatum").fill(date);
+    await readingForm.getByLabel("Tankstand (l)").fill(liters);
+    await readingForm.getByRole("button", { name: "Speichern", exact: true }).click();
   }
 
   await page.getByRole("link", { name: "Abrechnungen" }).click();

@@ -24,6 +24,7 @@ export function GET() {
     if (!tenant) {
       throw new ApiError("Mieter nicht gefunden", 404);
     }
+    const externalBillings = await prisma.externalBillingClosing.findMany({ where: { propertyId: tenant.unit.propertyId, tenants: { some: { tenantId } } }, orderBy: { closingDate: "desc" } });
 
     return jsonOk({
       id: tenant.id,
@@ -55,6 +56,7 @@ export function GET() {
       },
       financialPeriods: tenant.financialPeriods,
       currentFinance: tenant.financialPeriods.find((period) => period.validFrom <= new Date() && (!period.validTo || period.validTo >= new Date())) ?? null,
+      externalBillings,
     });
   });
 }

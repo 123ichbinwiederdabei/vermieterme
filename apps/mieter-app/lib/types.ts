@@ -26,6 +26,7 @@ export interface TenantProfile {
     city: string;
     totalShares: number;
   };
+  externalBillings?: Array<{ id: string; closingDate: string; note: string | null }>;
 }
 
 export interface BillingPeriodSummary {

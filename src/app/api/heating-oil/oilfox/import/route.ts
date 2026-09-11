@@ -35,7 +35,7 @@ export function POST(request: Request) {
       const exists = await prisma.oilStockReading.findUnique({ where: { oilFoxDeviceId_readingDate: { oilFoxDeviceId: device.id, readingDate: row.measuredAt } } });
       if (exists) duplicates += 1; else pending.push(row);
     }
-    const invalidRows = parsed.invalidRows + (parsed.rows.length - pending.length - duplicates);
+    const invalidRows = parsed.invalidRows + parsed.unitErrors + (parsed.rows.length - pending.length - duplicates);
     if (!dryRun) {
       const priorImport = await prisma.oilFoxCsvImport.findUnique({ where: { tankId_deviceId_fileHash: { tankId, deviceId, fileHash } } });
       if (priorImport) return jsonOk({ dryRun: false, imported: 0, skippedDuplicates: duplicates, invalidRows, warnings: [...warnings, "Diese Datei wurde bereits importiert."], importId: priorImport.id, candidateCount: 0 });
@@ -43,7 +43,7 @@ export function POST(request: Request) {
       const readingIds: string[] = [];
       for (const row of pending) {
         const reading = await prisma.oilStockReading.create({
-          data: { tankId, oilFoxDeviceId: device.id, oilFoxCsvImportId: batch.id, deviceHwid: device.hwid, readingDate: row.measuredAt, quantityLiters: row.fillLevelLiters, distanceCm: row.distanceCm, method: "OILFOX", source: "OILFOX_CSV" },
+          data: { tankId, oilFoxDeviceId: device.id, oilFoxCsvImportId: batch.id, deviceHwid: device.hwid, readingDate: row.measuredAt, quantityLiters: row.fillLevelLiters, distanceCm: row.distanceCm, fillLevelPercent: row.fillLevelPercent, meteringStatus: row.meteringStatus, manuallyInvalidated: row.manuallyInvalidated, meteringType: row.meteringType, signalStrength: row.signalStrength, validationError: row.manuallyInvalidated ? "Vom Gerät manuell als ungültig markiert" : null, method: "OILFOX", source: "OILFOX_CSV" },
         });
         imported += 1;
         readingIds.push(reading.id);
@@ -52,9 +52,9 @@ export function POST(request: Request) {
       // also catches a delivery in a reverse-sorted FoxMobile export.
       for (const readingId of readingIds) await detectDeliveryCandidate(tankId, readingId);
       const candidates = await prisma.oilDeliveryCandidate.count({ where: { tankId, afterMeasurement: { oilFoxCsvImportId: batch.id } } });
-      return jsonOk({ dryRun: false, imported, skippedDuplicates: duplicates, invalidRows, warnings, importId: batch.id, candidateCount: candidates });
+      return jsonOk({ dryRun: false, imported, skippedDuplicates: duplicates, invalidRows, unitErrors: parsed.unitErrors, detectedColumns: parsed.detectedColumns, warnings, importId: batch.id, candidateCount: candidates });
     }
-    return jsonOk({ dryRun: true, imported: pending.length, skippedDuplicates: duplicates, invalidRows, warnings, measuredFrom: pending[0]?.measuredAt ?? null, measuredTo: pending[pending.length - 1]?.measuredAt ?? null, candidateCount: estimateIncreases(pending, tank.deliveryDetectionThresholdLiters.toString()) });
+    return jsonOk({ dryRun: true, imported: pending.length, skippedDuplicates: duplicates, invalidRows, unitErrors: parsed.unitErrors, detectedColumns: parsed.detectedColumns, warnings, measuredFrom: pending[0]?.measuredAt ?? null, measuredTo: pending[pending.length - 1]?.measuredAt ?? null, candidateCount: estimateIncreases(pending, tank.deliveryDetectionThresholdLiters.toString()) });
   });
 }
 

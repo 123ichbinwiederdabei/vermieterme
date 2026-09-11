@@ -54,10 +54,28 @@ export function POST(request: Request) {
         contractId,
         validFrom,
         validTo,
+        billingValidFrom: body.billingValidFrom ? dateValue(body.billingValidFrom, "Abrechnungswirksam ab") : null,
+        billingValidTo: body.billingValidTo ? dateValue(body.billingValidTo, "Abrechnungswirksam bis") : null,
+        billingEffectiveReason: String(body.billingEffectiveReason || "").trim() || null,
         priceCentsPerKwh: price,
         monthlyBasePriceCents: integerCents(body.monthlyBasePriceCents, "Grundpreis"),
         name: body.name || null,
       }}));
+    }
+
+    if (action === "updateTariff") {
+      const id = requiredString(body.id, "Tarif"); const existing = await prisma.electricityTariff.findUnique({ where: { id } });
+      if (!existing) throw new ApiError("Tarif nicht gefunden", 404);
+      const billingValidFrom = body.billingValidFrom ? dateValue(body.billingValidFrom, "Abrechnungswirksam ab") : null;
+      const billingValidTo = body.billingValidTo ? dateValue(body.billingValidTo, "Abrechnungswirksam bis") : null;
+      if (billingValidFrom && billingValidTo && billingValidTo < billingValidFrom) throw new ApiError("Das Abrechnungsende liegt vor dem Beginn", 400);
+      const updated = await prisma.$transaction(async (tx) => {
+        const tariff = await tx.electricityTariff.update({ where: { id }, data: { billingValidFrom, billingValidTo, billingEffectiveReason: String(body.billingEffectiveReason || "").trim() || null } });
+        const contract = await tx.electricityContract.findUnique({ where: { id: existing.contractId } });
+        if (contract) await tx.billingSnapshot.updateMany({ where: { billingPeriod: { propertyId: contract.propertyId }, kind: "ELECTRICITY", status: "APPLIED" }, data: { status: "STALE" } });
+        return tariff;
+      });
+      return jsonOk(updated);
     }
 
     if (action === "createMeter") {
@@ -95,6 +113,22 @@ export function POST(request: Request) {
         reason: body.reason || "REGULAR",
         note: body.note || null,
       }}));
+    }
+
+    if (action === "updateReading" || action === "deleteReading") {
+      const id = requiredString(body.id, "Ablesung"); const reading = await prisma.electricityReading.findUnique({ where: { id } });
+      if (!reading) throw new ApiError("Ablesung nicht gefunden", 404);
+      const reason = requiredString(body.correctionReason, "Korrekturbegründung");
+      if (action === "deleteReading") {
+        await prisma.$transaction([prisma.electricityReadingAudit.create({ data: { meterId: reading.meterId, action: "DELETE", previousJson: JSON.stringify({ readingDate: reading.readingDate, readingKwh: reading.readingKwh.toString(), reason: reading.reason, note: reading.note }), reason } }), prisma.electricityReading.delete({ where: { id } })]);
+        return jsonOk({ deleted: true });
+      }
+      const readingKwh = decimalString(body.readingKwh, "Zählerstand");
+      const updated = await prisma.$transaction(async (tx) => {
+        await tx.electricityReadingAudit.create({ data: { readingId: id, meterId: reading.meterId, action: "UPDATE", previousJson: JSON.stringify({ readingDate: reading.readingDate, readingKwh: reading.readingKwh.toString(), reason: reading.reason, note: reading.note }), reason } });
+        return tx.electricityReading.update({ where: { id }, data: { readingKwh, note: body.note ?? reading.note } });
+      });
+      return jsonOk(updated);
     }
 
     throw new ApiError("Unbekannte Aktion", 400);
