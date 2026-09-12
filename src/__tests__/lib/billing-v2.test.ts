@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { allocateCents, calculateElectricityCostCents, calculateFifoConsumption, prorateMonthlyCents, toScaledInteger } from "@/lib/billing-v2";
-import { euroToCents } from "@/lib/money";
+import { euroToCents, euroToMicroEuros, microEurosPerKwhToEuro, microEurosPerKwhToInput } from "@/lib/money";
 
 describe("Billing v2 exact arithmetic", () => {
   it("parses Euro without floating-point arithmetic", () => {
     expect(euroToCents("12,34")).toBe("1234");
     expect(euroToCents("0.01")).toBe("1");
     expect(() => euroToCents("1.234")).toThrow();
+    expect(euroToMicroEuros("0,2547")).toBe("254700");
+    expect(microEurosPerKwhToEuro("276400")).toBe("0,2764 €");
+    expect(microEurosPerKwhToInput("254700")).toBe("0.2547");
   });
 
   it("distributes cent remainders deterministically", () => {
@@ -25,8 +28,9 @@ describe("Billing v2 exact arithmetic", () => {
   });
 
   it("prices measured electricity and rejects a reversing meter", () => {
-    expect(calculateElectricityCostCents("1000.125", "1123.575", 32)).toEqual({ consumptionKwh: "123.45", amountCents: 3950n });
-    expect(() => calculateElectricityCostCents("10", "9.999", 30)).toThrow("rückwärts");
+    expect(calculateElectricityCostCents("1000.125", "1123.575", 320000n)).toEqual({ consumptionKwh: "123.45", amountCents: 3950n });
+    expect(calculateElectricityCostCents("0", "100", 254700n)).toEqual({ consumptionKwh: "100", amountCents: 2547n });
+    expect(() => calculateElectricityCostCents("10", "9.999", 300000n)).toThrow("rückwärts");
   });
 
   it("prorates partial months by calendar days", () => {

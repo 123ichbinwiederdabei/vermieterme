@@ -26,6 +26,14 @@ export function integerCents(value: unknown, label: string): bigint {
   return BigInt(normalized);
 }
 
+export function integerMicroEuros(value: unknown, label: string): bigint {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new ApiError(`${label} muss als skalierter Mikro-Euro-Betrag angegeben werden`, 400);
+  }
+  return BigInt(normalized);
+}
+
 export function dateValue(value: unknown, label: string): Date {
   const raw = requiredString(value, label);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {

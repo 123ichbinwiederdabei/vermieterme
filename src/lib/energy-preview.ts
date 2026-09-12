@@ -263,7 +263,7 @@ export async function buildElectricityPreview(
         const startReading = readingMap.get(isoDay(start))!;
         const endReading = readingMap.get(isoDay(end))!;
         try {
-          const result = calculateElectricityCostCents(startReading.readingKwh.toString(), endReading.readingKwh.toString(), tariff.priceCentsPerKwh);
+          const result = calculateElectricityCostCents(startReading.readingKwh.toString(), endReading.readingKwh.toString(), tariff.priceMicroEuroPerKwh);
           const consumption = toScaledInteger(result.consumptionKwh);
           if (meter.role === "UNIT_CONSUMPTION" && meter.unitId) {
             const current = unitEnergy.get(meter.unitId) ?? { amount: 0n, consumption: 0n };
@@ -273,7 +273,7 @@ export async function buildElectricityPreview(
           } else if (meter.role === "COMMON_ELECTRICITY") {
             commonAmount += result.amountCents;
           }
-          intervalDetails.push({ meterId: meter.id, meterNumber: meter.meterNumber, start: isoDay(start), end: isoDay(end), consumptionKwh: result.consumptionKwh, priceCentsPerKwh: tariff.priceCentsPerKwh, contractValidFrom: isoDay(tariff.validFrom), billingValidFrom: isoDay(settlementStart(tariff)), billingEffectiveReason: tariff.billingEffectiveReason, amountCents: result.amountCents.toString() });
+          intervalDetails.push({ meterId: meter.id, meterNumber: meter.meterNumber, start: isoDay(start), end: isoDay(end), consumptionKwh: result.consumptionKwh, priceMicroEuroPerKwh: tariff.priceMicroEuroPerKwh.toString(), contractValidFrom: isoDay(tariff.validFrom), billingValidFrom: isoDay(settlementStart(tariff)), billingEffectiveReason: tariff.billingEffectiveReason, amountCents: result.amountCents.toString() });
         } catch (error) {
           blockers.push(error instanceof Error ? `${meter.meterNumber}: ${error.message}` : `${meter.meterNumber}: Berechnung fehlgeschlagen.`);
         }

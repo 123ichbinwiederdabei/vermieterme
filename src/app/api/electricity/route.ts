@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError, apiHandler, jsonCreated, jsonOk, requireAuth } from "@/lib/api-utils";
-import { dateValue, decimalString, integerCents, requiredString } from "@/lib/billing-v2-input";
+import { dateValue, decimalString, integerCents, integerMicroEuros, requiredString } from "@/lib/billing-v2-input";
 import { toScaledInteger } from "@/lib/billing-v2";
 
 export function GET(request: Request) {
@@ -48,8 +48,7 @@ export function POST(request: Request) {
         ],
       }});
       if (overlap) throw new ApiError("Tarifperioden dürfen sich nicht überschneiden", 409);
-      const price = Number(body.priceCentsPerKwh);
-      if (!Number.isInteger(price) || price < 0) throw new ApiError("Strompreis muss in vollen Cent je kWh angegeben werden", 400);
+      const price = integerMicroEuros(body.priceMicroEuroPerKwh, "Strompreis");
       return jsonCreated(await prisma.electricityTariff.create({ data: {
         contractId,
         validFrom,
@@ -57,7 +56,7 @@ export function POST(request: Request) {
         billingValidFrom: body.billingValidFrom ? dateValue(body.billingValidFrom, "Abrechnungswirksam ab") : null,
         billingValidTo: body.billingValidTo ? dateValue(body.billingValidTo, "Abrechnungswirksam bis") : null,
         billingEffectiveReason: String(body.billingEffectiveReason || "").trim() || null,
-        priceCentsPerKwh: price,
+        priceMicroEuroPerKwh: price,
         monthlyBasePriceCents: integerCents(body.monthlyBasePriceCents, "Grundpreis"),
         name: body.name || null,
       }}));
@@ -69,8 +68,9 @@ export function POST(request: Request) {
       const billingValidFrom = body.billingValidFrom ? dateValue(body.billingValidFrom, "Abrechnungswirksam ab") : null;
       const billingValidTo = body.billingValidTo ? dateValue(body.billingValidTo, "Abrechnungswirksam bis") : null;
       if (billingValidFrom && billingValidTo && billingValidTo < billingValidFrom) throw new ApiError("Das Abrechnungsende liegt vor dem Beginn", 400);
+      const priceMicroEuroPerKwh = body.priceMicroEuroPerKwh === undefined ? existing.priceMicroEuroPerKwh : integerMicroEuros(body.priceMicroEuroPerKwh, "Strompreis");
       const updated = await prisma.$transaction(async (tx) => {
-        const tariff = await tx.electricityTariff.update({ where: { id }, data: { billingValidFrom, billingValidTo, billingEffectiveReason: String(body.billingEffectiveReason || "").trim() || null } });
+        const tariff = await tx.electricityTariff.update({ where: { id }, data: { billingValidFrom, billingValidTo, billingEffectiveReason: String(body.billingEffectiveReason || "").trim() || null, priceMicroEuroPerKwh } });
         const contract = await tx.electricityContract.findUnique({ where: { id: existing.contractId } });
         if (contract) await tx.billingSnapshot.updateMany({ where: { billingPeriod: { propertyId: contract.propertyId }, kind: "ELECTRICITY", status: "APPLIED" }, data: { status: "STALE" } });
         return tariff;

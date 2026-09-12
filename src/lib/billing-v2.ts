@@ -128,7 +128,7 @@ export function calculateFifoConsumption(
 export function calculateElectricityCostCents(
   startKwh: string | number,
   endKwh: string | number,
-  priceCentsPerKwh: number
+  priceMicroEuroPerKwh: bigint
 ): { consumptionKwh: string; amountCents: bigint } {
   const start = toScaledInteger(startKwh);
   const end = toScaledInteger(endKwh);
@@ -136,7 +136,8 @@ export function calculateElectricityCostCents(
   const consumption = end - start;
   return {
     consumptionKwh: fromScaledInteger(consumption),
-    amountCents: roundFraction(consumption * BigInt(priceCentsPerKwh), 10n ** BigInt(QUANTITY_SCALE)),
+    // meter values use QUANTITY_SCALE decimals; one cent equals 10,000 µ€.
+    amountCents: roundFraction(consumption * priceMicroEuroPerKwh, 10n ** BigInt(QUANTITY_SCALE + 4)),
   };
 }
 

@@ -593,7 +593,9 @@ model ElectricityTariff {
   billingValidFrom      DateTime?
   billingValidTo        DateTime?
   billingEffectiveReason String?
-  priceCentsPerKwh      Int
+  // Unit prices need more precision than final Euro-cent amounts.  One Euro
+  // equals 1,000,000 micro-euro; final allocation amounts remain cents.
+  priceMicroEuroPerKwh  BigInt
   monthlyBasePriceCents BigInt
   name                  String?
   contract              ElectricityContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
