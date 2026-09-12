@@ -29,6 +29,11 @@ export function POST(request: Request) {
     const billingPeriodId = requiredString(body.billingPeriodId, "Abrechnungszeitraum");
     const costCategoryId = requiredString(body.costCategoryId, "Kostenart");
     await assertSmallWastewater(costCategoryId);
+    const billingPeriod = await prisma.billingPeriod.findUnique({ where: { id: billingPeriodId } });
+    if (!billingPeriod) throw new ApiError("Abrechnungszeitraum nicht gefunden", 404);
+    const servicePeriodStart = body.servicePeriodStart ? dateValue(body.servicePeriodStart, "Leistungsbeginn") : (body.serviceDate ? dateValue(body.serviceDate, "Leistungsdatum") : null);
+    const servicePeriodEnd = body.servicePeriodEnd ? dateValue(body.servicePeriodEnd, "Leistungsende") : servicePeriodStart;
+    if (servicePeriodStart && servicePeriodEnd && servicePeriodEnd < servicePeriodStart) throw new ApiError("Leistungsende darf nicht vor Leistungsbeginn liegen", 400);
     const lines = Array.isArray(body.lines) ? body.lines : [];
     if (!lines.length) throw new ApiError("Mindestens eine Rechnungszeile ist erforderlich", 400);
     const normalized = lines.map((line: unknown, index: number) => {
@@ -39,6 +44,6 @@ export function POST(request: Request) {
     });
     const totalAmountCents = integerCents(body.totalAmountCents, "Gesamtbetrag");
     if (normalized.reduce((sum: bigint, line: (typeof normalized)[number]) => sum + line.amountCents, 0n) !== totalAmountCents) throw new ApiError("Gesamtbetrag und Summe der Rechnungszeilen müssen centgenau übereinstimmen", 400);
-    return jsonCreated(await prisma.costInvoice.create({ data: { billingPeriodId, costCategoryId, supplier: String(body.supplier || "").trim() || null, invoiceNumber: String(body.invoiceNumber || "").trim() || null, invoiceDate: body.invoiceDate ? dateValue(body.invoiceDate, "Rechnungsdatum") : null, serviceDate: body.serviceDate ? dateValue(body.serviceDate, "Leistungsdatum") : null, totalAmountCents, note: String(body.note || "").trim() || null, lines: { create: normalized } }, include: { lines: true } }));
+    return jsonCreated(await prisma.costInvoice.create({ data: { billingPeriodId, propertyId: billingPeriod.propertyId, costCategoryId, supplier: String(body.supplier || "").trim() || null, invoiceNumber: String(body.invoiceNumber || "").trim() || null, invoiceDate: body.invoiceDate ? dateValue(body.invoiceDate, "Rechnungsdatum") : null, serviceDate: body.serviceDate ? dateValue(body.serviceDate, "Leistungsdatum") : servicePeriodStart ?? undefined, servicePeriodStart: servicePeriodStart ?? undefined, servicePeriodEnd: servicePeriodEnd ?? undefined, totalAmountCents, note: String(body.note || "").trim() || null, lines: { create: normalized } }, include: { lines: true } }));
   });
 }

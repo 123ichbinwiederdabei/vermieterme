@@ -12,6 +12,7 @@ const links = [
   { href: "/billing", label: "Abrechnungen" },
   { href: "/heating-oil", label: "Heizöl" },
   { href: "/electricity", label: "Strom" },
+  { href: "/small-wastewater", label: "Kleinkläranlage" },
   { href: "/settings", label: "Einstellungen" },
 ];
 

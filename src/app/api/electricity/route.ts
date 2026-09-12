@@ -83,7 +83,10 @@ export function POST(request: Request) {
       const contract = await prisma.electricityContract.findUnique({ where: { id: contractId } });
       if (!contract) throw new ApiError("Stromvertrag nicht gefunden", 404);
       const role = requiredString(body.role, "Zählerrolle");
+      const supportedRoles = new Set(["UNIT_CONSUMPTION", "COMMON_ELECTRICITY", "INFORMATIONAL_TOTAL", "SMALL_WASTEWATER_ELECTRICITY"]);
+      if (!supportedRoles.has(role)) throw new ApiError("Ungültige Zählerrolle", 400);
       if (role === "UNIT_CONSUMPTION" && !body.unitId) throw new ApiError("Ein Wohnungszähler benötigt eine Wohnung", 400);
+      if (role === "SMALL_WASTEWATER_ELECTRICITY" && body.unitId) throw new ApiError("Der Anlagenzähler der Kleinkläranlage darf keiner Wohnung zugeordnet werden", 400);
       return jsonCreated(await prisma.electricityMeter.create({ data: {
         contractId,
         propertyId: contract.propertyId,

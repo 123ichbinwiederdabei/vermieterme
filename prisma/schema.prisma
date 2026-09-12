@@ -66,6 +66,7 @@ model Property {
   heatingSystems       HeatingSystem[]
   electricityContracts ElectricityContract[]
   electricityMeters    ElectricityMeter[]
+  costInvoices         CostInvoice[]
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 }
@@ -247,15 +248,21 @@ model Document {
 model CostInvoice {
   id               String            @id @default(cuid())
   billingPeriodId  String
+  propertyId       String
   costCategoryId   String
   supplier         String?
   invoiceNumber    String?
   invoiceDate      DateTime?
   serviceDate      DateTime?
+  // Inclusive service range. A one-off service stores the same value in both
+  // fields; the legacy serviceDate remains the UI-compatible shortcut.
+  servicePeriodStart DateTime?
+  servicePeriodEnd   DateTime?
   totalAmountCents BigInt
   note             String?
   documentId       String?           @unique
   billingPeriod    BillingPeriod     @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   costCategory     CostCategory      @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
   document         Document?         @relation("CostInvoiceDocument", fields: [documentId], references: [id], onDelete: SetNull)
   lines            CostInvoiceLine[]

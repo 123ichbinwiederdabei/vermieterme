@@ -232,7 +232,9 @@ export async function buildElectricityPreview(
       const range = intersect(settlementStart(tariff), settlementEnd(tariff), period.startDate, period.endDate);
       if (range) { const amount = prorateMonthlyCents(tariff.monthlyBasePriceCents, range.start, range.end); contractBase += amount; totalBase += amount; }
     }
-    for (const meter of contract.meters.filter((row) => row.role !== "INFORMATIONAL_TOTAL")) {
+    // Plant meters belong exclusively to the linked operating-cost category;
+    // they must neither trigger generic-electricity blockers nor be charged twice.
+    for (const meter of contract.meters.filter((row) => row.role === "UNIT_CONSUMPTION" || row.role === "COMMON_ELECTRICITY")) {
       const boundaries = new Map<string, Date>();
       boundaries.set(isoDay(period.startDate), period.startDate);
       boundaries.set(isoDay(period.endDate), period.endDate);

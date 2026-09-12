@@ -63,6 +63,16 @@ test("electricity and finance dashboards are available", async ({ page }) => {
   await expect(page.getByText("Kaltmiete").first()).toBeVisible();
 });
 
+test("small wastewater management and plant-meter role are available", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "Strom", exact: true }).click();
+  const meterForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Stromzähler", exact: true }) });
+  await expect(meterForm.getByRole("option", { name: "Kleinkläranlage – Anlagenstrom" })).toBeAttached();
+  await page.getByRole("link", { name: "Kleinkläranlage", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Kleinkläranlage", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rechnung erfassen", exact: true })).toBeVisible();
+});
+
 test("tenant card opens and updates the complete finance history", async ({ page, request }) => {
   await login(page);
   await page.getByRole("navigation").getByRole("link", { name: "Mieter", exact: true }).click();

@@ -1,9 +1,9 @@
 import { createHash } from "crypto";
 import { ApiError } from "@/lib/api-utils";
 import { allocateCents, fromScaledInteger, serializeExact, toScaledInteger } from "@/lib/billing-v2";
-import { splitUnitAmountAcrossTenants } from "@/lib/energy-billing";
+import { calculateElectricityCostCents, isoDay, splitUnitAmountAcrossTenants } from "@/lib/energy-billing";
 import { prisma } from "@/lib/prisma";
-import { isEligibleInvoiceLine, SMALL_WASTEWATER_CATEGORY } from "@/lib/cost-invoice";
+import { allocateServiceLineToPeriod, isEligibleInvoiceLine, SMALL_WASTEWATER_CATEGORY } from "@/lib/cost-invoice";
 
 export { isEligibleInvoiceLine, SMALL_WASTEWATER_CATEGORY } from "@/lib/cost-invoice";
 
@@ -25,6 +25,42 @@ export type InvoicePreview = {
 const overlaps = (startA: Date, endA: Date | null, startB: Date, endB: Date) =>
   startA <= endB && (!endA || endA >= startB);
 
+async function smallWastewaterElectricity(propertyId: string, periodStart: Date, periodEnd: Date) {
+  const contracts = await prisma.electricityContract.findMany({
+    where: { propertyId }, include: { tariffs: true, meters: { where: { role: "SMALL_WASTEWATER_ELECTRICITY" }, include: { readings: true } } },
+  });
+  let amountCents = 0n;
+  const blockers: string[] = [];
+  const details: Array<Record<string, string>> = [];
+  for (const contract of contracts) for (const meter of contract.meters) {
+    const settlementStart = (tariff: typeof contract.tariffs[number]) => tariff.billingValidFrom ?? tariff.validFrom;
+    const settlementEnd = (tariff: typeof contract.tariffs[number]) => tariff.billingValidTo ?? tariff.validTo ?? periodEnd;
+    const boundaries = new Map<string, Date>([[isoDay(periodStart), periodStart], [isoDay(periodEnd), periodEnd]]);
+    for (const tariff of contract.tariffs) {
+      const date = settlementStart(tariff);
+      if (date > periodStart && date < periodEnd) boundaries.set(isoDay(date), date);
+    }
+    const readingByDay = new Map(meter.readings.map((reading) => [isoDay(reading.readingDate), reading]));
+    const dates = [...boundaries.values()].sort((a, b) => a.getTime() - b.getTime());
+    if (dates.some((date) => !readingByDay.has(isoDay(date)))) {
+      blockers.push(`Ablesung für Anlagenzähler ${meter.meterNumber} an jeder Abrechnungs- oder Tarifgrenze erforderlich.`);
+      continue;
+    }
+    for (let index = 0; index < dates.length - 1; index += 1) {
+      const start = dates[index]; const end = dates[index + 1];
+      const priorDay = new Date(end); priorDay.setUTCDate(priorDay.getUTCDate() - 1);
+      const tariff = contract.tariffs.find((row) => settlementStart(row) <= start && settlementEnd(row) >= priorDay);
+      if (!tariff) { blockers.push(`Tariflücke für Anlagenzähler ${meter.meterNumber} ab ${isoDay(start)}.`); continue; }
+      try {
+        const result = calculateElectricityCostCents(readingByDay.get(isoDay(start))!.readingKwh.toString(), readingByDay.get(isoDay(end))!.readingKwh.toString(), tariff.priceMicroEuroPerKwh);
+        amountCents += result.amountCents;
+        details.push({ meterNumber: meter.meterNumber, start: isoDay(start), end: isoDay(end), consumptionKwh: result.consumptionKwh, amountCents: result.amountCents.toString(), priceMicroEuroPerKwh: tariff.priceMicroEuroPerKwh.toString() });
+      } catch (error) { blockers.push(error instanceof Error ? `${meter.meterNumber}: ${error.message}` : `Anlagenzähler ${meter.meterNumber}: Berechnung fehlgeschlagen.`); }
+    }
+  }
+  return { amountCents, blockers, details };
+}
+
 export async function buildSmallWastewaterPreview(billingPeriodId: string, costCategoryId: string): Promise<InvoicePreview> {
   const period = await prisma.billingPeriod.findUnique({
     where: { id: billingPeriodId },
@@ -36,7 +72,16 @@ export async function buildSmallWastewaterPreview(billingPeriodId: string, costC
   const category = await prisma.costCategory.findUnique({ where: { id: costCategoryId } });
   if (!period || !category) throw new ApiError("Abrechnungszeitraum oder Kostenart nicht gefunden", 404);
   if (category.name !== SMALL_WASTEWATER_CATEGORY) throw new ApiError("Diese Vorschau ist nur für Entwässerung – Kleinkläranlage verfügbar", 400);
-  const invoices = await prisma.costInvoice.findMany({ where: { billingPeriodId, costCategoryId }, include: { lines: true }, orderBy: { serviceDate: "asc" } });
+  const invoices = await prisma.costInvoice.findMany({
+    where: {
+      costCategoryId,
+      OR: [
+        { propertyId: period.propertyId, servicePeriodStart: { lte: period.endDate }, servicePeriodEnd: { gte: period.startDate } },
+        { billingPeriodId, servicePeriodStart: null },
+      ],
+    },
+    include: { lines: true }, orderBy: { serviceDate: "asc" },
+  });
   const blockers: string[] = [];
   const warnings: string[] = [];
   let eligible = 0n;
@@ -44,13 +89,17 @@ export async function buildSmallWastewaterPreview(billingPeriodId: string, costC
   const details = invoices.map((invoice) => {
     const sum = invoice.lines.reduce((total, line) => total + line.amountCents, 0n);
     if (sum !== invoice.totalAmountCents) blockers.push(`Rechnung ${invoice.invoiceNumber || invoice.id}: Summe der Rechnungszeilen stimmt nicht mit dem Gesamtbetrag überein.`);
-    const eligibleAmount = invoice.lines.filter(isEligibleInvoiceLine).reduce((total, line) => total + line.amountCents, 0n);
-    const excludedAmount = invoice.totalAmountCents - eligibleAmount;
+    const periodLines = invoice.lines.map((line) => ({ ...line, periodAmountCents: allocateServiceLineToPeriod(line.amountCents, invoice.servicePeriodStart, invoice.servicePeriodEnd, period.startDate, period.endDate) }));
+    const eligibleAmount = periodLines.filter(isEligibleInvoiceLine).reduce((total, line) => total + line.periodAmountCents, 0n);
+    const excludedAmount = periodLines.filter((line) => !isEligibleInvoiceLine(line)).reduce((total, line) => total + line.periodAmountCents, 0n);
     eligible += eligibleAmount;
     excluded += excludedAmount;
-    return { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, totalAmountCents: invoice.totalAmountCents.toString(), eligibleAmountCents: eligibleAmount.toString(), excludedAmountCents: excludedAmount.toString(), lines: invoice.lines };
+    return { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, totalAmountCents: invoice.totalAmountCents.toString(), eligibleAmountCents: eligibleAmount.toString(), excludedAmountCents: excludedAmount.toString(), servicePeriodStart: invoice.servicePeriodStart, servicePeriodEnd: invoice.servicePeriodEnd, lines: periodLines.map((line) => ({ ...line, periodAmountCents: line.periodAmountCents.toString() })) };
   });
   if (!invoices.length) warnings.push("Noch keine Rechnungen für die Kleinkläranlage erfasst.");
+  const electricity = await smallWastewaterElectricity(period.propertyId, period.startDate, period.endDate);
+  eligible += electricity.amountCents;
+  blockers.push(...electricity.blockers);
   const units = period.property.units;
   for (const unit of units) {
     if (!unit.areaM2 || toScaledInteger(unit.areaM2.toString()) <= 0n) blockers.push(`Wohnfläche für ${unit.name} fehlt.`);
@@ -76,5 +125,5 @@ export async function buildSmallWastewaterPreview(billingPeriodId: string, costC
   });
   const tenantAmount = allocations.reduce((sum, row) => sum + BigInt(row.amountCents), 0n);
   const sourceFingerprint = createHash("sha256").update(JSON.stringify(serializeExact({ invoices, units: units.map((unit) => [unit.id, unit.areaM2?.toString()]) }))).digest("hex");
-  return { kind: "SMALL_WASTEWATER", billingPeriodId, costCategoryId, totalAmountCents: eligible.toString(), tenantAmountCents: tenantAmount.toString(), landlordAmountCents: (excluded + vacancy).toString(), vacancyAmountCents: vacancy.toString(), allocations, details: { invoices: details, eligibleAmountCents: eligible.toString(), excludedAmountCents: excluded.toString() }, blockers, warnings, sourceFingerprint };
+  return { kind: "SMALL_WASTEWATER", billingPeriodId, costCategoryId, totalAmountCents: eligible.toString(), tenantAmountCents: tenantAmount.toString(), landlordAmountCents: (excluded + vacancy).toString(), vacancyAmountCents: vacancy.toString(), allocations, details: { invoices: details, eligibleAmountCents: eligible.toString(), excludedAmountCents: excluded.toString(), plantElectricityCents: electricity.amountCents.toString(), plantElectricityIntervals: electricity.details }, blockers, warnings, sourceFingerprint };
 }
