@@ -26,7 +26,11 @@ export interface TenantProfile {
     city: string;
     totalShares: number;
   };
-  externalBillings?: Array<{ id: string; closingDate: string; note: string | null }>;
+  externalBillings?: Array<{
+    id: string;
+    closingDate: string;
+    note: string | null;
+  }>;
 }
 
 export interface BillingPeriodSummary {
@@ -41,6 +45,9 @@ export interface BillingPeriodSummary {
     zip: string;
     city: string;
   };
+  totalUnitCostsCents: string;
+  totalPrepaymentCents: string;
+  differenceCents: string;
   totalUnitCosts: number;
   totalPrepayment: number;
   difference: number;
@@ -62,6 +69,9 @@ export interface BillingPeriodDetail {
     id: string;
     category: string;
     distributionKey: string;
+    totalAmountCents: string;
+    amountCents: string;
+    prepaymentCents: string;
     totalAmount: number;
     unitAmount: number;
   }>;
@@ -70,6 +80,10 @@ export interface BillingPeriodDetail {
     monthlyAmount: number;
   }>;
   totals: {
+    totalCostsCents: string;
+    totalUnitCostsCents: string;
+    totalPrepaymentCents: string;
+    differenceCents: string;
     totalCosts: number;
     totalUnitCosts: number;
     totalPrepayment: number;

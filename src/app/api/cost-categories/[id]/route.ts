@@ -4,7 +4,7 @@ import { validateCalculationType } from "@/lib/cost-category";
 
 export function PUT(
   request: Request,
-  { params: paramsPromise }: { params: Promise<{ id: string }> }
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
   return apiHandler(async () => {
     await requireAuth();
@@ -24,13 +24,22 @@ export function PUT(
       },
     });
 
+    await prisma.$transaction([
+      prisma.categoryCalculationHead.updateMany({
+        where: { costCategoryId: id },
+        data: { stale: true },
+      }),
+      prisma.billingPeriod.updateMany({
+        data: { sourceRevision: { increment: 1 } },
+      }),
+    ]);
     return jsonOk(category);
   });
 }
 
 export function DELETE(
   _request: Request,
-  { params: paramsPromise }: { params: Promise<{ id: string }> }
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
   return apiHandler(async () => {
     await requireAuth();

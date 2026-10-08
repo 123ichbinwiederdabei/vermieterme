@@ -1,3 +1,4 @@
+import { invalidateProperty } from "@/lib/billing-freshness";
 import { prisma } from "@/lib/prisma";
 import { apiHandler, requireAuth, jsonOk, jsonCreated } from "@/lib/api-utils";
 
@@ -57,55 +58,80 @@ export function POST(request: Request) {
     } = body;
 
     const tenantData = {
-        unitId,
-        salutation,
-        firstName,
-        lastName,
-        salutation2,
-        firstName2,
-        lastName2,
-        phone: phone || null,
-        email: email || null,
-        bankName: bankName || null,
-        iban: iban || null,
-        accountHolder: accountHolder || null,
-        moveInDate: new Date(moveInDate),
-        moveOutDate: moveOutDate ? new Date(moveOutDate) : null,
-        leaseType: leaseType || "standard",
-        indexBaseYear: indexBaseYear ?? null,
-        indexReferenceValue: indexReferenceValue ?? null,
-        indexReferenceDate: indexReferenceDate
-          ? new Date(indexReferenceDate)
-          : null,
-        indexMinMonths: indexMinMonths ?? 12,
+      unitId,
+      salutation,
+      firstName,
+      lastName,
+      salutation2,
+      firstName2,
+      lastName2,
+      phone: phone || null,
+      email: email || null,
+      bankName: bankName || null,
+      iban: iban || null,
+      accountHolder: accountHolder || null,
+      moveInDate: new Date(moveInDate),
+      moveOutDate: moveOutDate ? new Date(moveOutDate) : null,
+      leaseType: leaseType || "standard",
+      indexBaseYear: indexBaseYear ?? null,
+      indexReferenceValue: indexReferenceValue ?? null,
+      indexReferenceDate: indexReferenceDate
+        ? new Date(indexReferenceDate)
+        : null,
+      indexMinMonths: indexMinMonths ?? 12,
     };
-    if (monthlyColdRentCents === undefined || monthlyPrepaymentCents === undefined) {
-      return jsonCreated(await prisma.tenant.create({ data: tenantData }));
+    if (
+      monthlyColdRentCents === undefined ||
+      monthlyPrepaymentCents === undefined
+    ) {
+      const created = await prisma.tenant.create({ data: tenantData });
+      const unit = await prisma.unit.findUnique({ where: { id: unitId } });
+      if (unit) await invalidateProperty(unit.propertyId);
+      return jsonCreated(created);
     }
     const tenant = await prisma.$transaction(async (tx) => {
       const created = await tx.tenant.create({ data: tenantData });
       {
-        const components = Array.isArray(prepaymentComponents) ? prepaymentComponents : [];
-        const componentTotal = components.reduce((sum: bigint, component: { monthlyAmountCents: string }) => sum + BigInt(component.monthlyAmountCents), 0n);
+        const components = Array.isArray(prepaymentComponents)
+          ? prepaymentComponents
+          : [];
+        const componentTotal = components.reduce(
+          (sum: bigint, component: { monthlyAmountCents: string }) =>
+            sum + BigInt(component.monthlyAmountCents),
+          0n,
+        );
         if (componentTotal !== BigInt(monthlyPrepaymentCents)) {
-          throw new Error("Die Summe der NK-Komponenten entspricht nicht der gesamten NK-Vorauszahlung");
+          throw new Error(
+            "Die Summe der NK-Komponenten entspricht nicht der gesamten NK-Vorauszahlung",
+          );
         }
-        await tx.leaseFinancialPeriod.create({ data: {
-          tenantId: created.id,
-          validFrom: new Date(moveInDate),
-          validTo: moveOutDate ? new Date(moveOutDate) : null,
-          monthlyColdRentCents: BigInt(monthlyColdRentCents),
-          monthlyPrepaymentCents: BigInt(monthlyPrepaymentCents),
-          reason: "Mietbeginn",
-          components: { create: components.map((component: { costCategoryId: string; monthlyAmountCents: string }) => ({
-            costCategoryId: component.costCategoryId,
-            monthlyAmountCents: BigInt(component.monthlyAmountCents),
-          })) },
-        }});
+        await tx.leaseFinancialPeriod.create({
+          data: {
+            tenantId: created.id,
+            validFrom: new Date(moveInDate),
+            validTo: moveOutDate ? new Date(moveOutDate) : null,
+            monthlyColdRentCents: BigInt(monthlyColdRentCents),
+            monthlyPrepaymentCents: BigInt(monthlyPrepaymentCents),
+            reason: "Mietbeginn",
+            components: {
+              create: components.map(
+                (component: {
+                  costCategoryId: string;
+                  monthlyAmountCents: string;
+                }) => ({
+                  costCategoryId: component.costCategoryId,
+                  monthlyAmountCents: BigInt(component.monthlyAmountCents),
+                }),
+              ),
+            },
+          },
+        });
       }
       return created;
     });
 
+    const unit = await prisma.unit.findUnique({ where: { id: tenant.unitId } });
+    if (unit) await invalidateProperty(unit.propertyId);
     return jsonCreated(tenant);
   });
 }

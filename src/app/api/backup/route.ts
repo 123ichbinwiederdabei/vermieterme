@@ -1,42 +1,214 @@
 import { ApiError, apiHandler, jsonOk, requireAuth } from "@/lib/api-utils";
 import { serializeExact } from "@/lib/billing-v2";
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import path from "node:path";
 import { prisma } from "@/lib/prisma";
 
 const modelReads = {
-  properties: () => prisma.property.findMany(), units: () => prisma.unit.findMany(), tenants: () => prisma.tenant.findMany(), costCategories: () => prisma.costCategory.findMany(), billingPeriods: () => prisma.billingPeriod.findMany(), costs: () => prisma.cost.findMany(), prepayments: () => prisma.prepayment.findMany(), landlordInfo: () => prisma.landlordInfo.findMany(), pdfTemplates: () => prisma.pdfTemplate.findMany(), rentChanges: () => prisma.rentChange.findMany(), vpiEntries: () => prisma.vpiEntry.findMany(), documents: () => prisma.document.findMany(),
-  heatingSystems: () => prisma.heatingSystem.findMany(), heatingSystemUnits: () => prisma.heatingSystemUnit.findMany(), heatingOilTanks: () => prisma.heatingOilTank.findMany(), heatingOilDeliveries: () => prisma.heatingOilDelivery.findMany(), oilInventoryLots: () => prisma.oilInventoryLot.findMany(), oilStockReadings: () => prisma.oilStockReading.findMany(), oilFoxDevices: () => prisma.oilFoxDevice.findMany(), oilDeliveryCandidates: () => prisma.oilDeliveryCandidate.findMany(), oilFoxSyncStates: () => prisma.oilFoxSyncState.findMany(),
-  electricityContracts: () => prisma.electricityContract.findMany(), electricityTariffs: () => prisma.electricityTariff.findMany(), electricityMeters: () => prisma.electricityMeter.findMany(), electricityReadings: () => prisma.electricityReading.findMany(), electricityReadingAudits: () => prisma.electricityReadingAudit.findMany(), externalBillingClosings: () => prisma.externalBillingClosing.findMany(), externalBillingClosingTenants: () => prisma.externalBillingClosingTenant.findMany(), leaseFinancialPeriods: () => prisma.leaseFinancialPeriod.findMany(), prepaymentComponents: () => prisma.prepaymentComponent.findMany(), billingSnapshots: () => prisma.billingSnapshot.findMany(), costAllocations: () => prisma.costAllocation.findMany(), oilLotConsumptions: () => prisma.oilLotConsumption.findMany(),
+  propertyTaxSettings: () => prisma.propertyTaxSetting.findMany(),
+  costInvoices: () => prisma.costInvoice.findMany(),
+  costInvoiceLines: () => prisma.costInvoiceLine.findMany(),
+  leaseCostCategoryAgreements: () =>
+    prisma.leaseCostCategoryAgreement.findMany(),
+  oilFoxCsvImports: () => prisma.oilFoxCsvImport.findMany(),
+  invoiceTemplates: () => prisma.invoiceTemplate.findMany(),
+  invoiceAttachments: () => prisma.invoiceAttachment.findMany(),
+  invoiceExtractionJobs: () => prisma.invoiceExtractionJob.findMany(),
+  categoryCalculationHeads: () => prisma.categoryCalculationHead.findMany(),
+  statementRevisions: () => prisma.statementRevision.findMany(),
+  properties: () => prisma.property.findMany(),
+  units: () => prisma.unit.findMany(),
+  tenants: () => prisma.tenant.findMany(),
+  costCategories: () => prisma.costCategory.findMany(),
+  billingPeriods: () => prisma.billingPeriod.findMany(),
+  costs: () => prisma.cost.findMany(),
+  prepayments: () => prisma.prepayment.findMany(),
+  landlordInfo: () => prisma.landlordInfo.findMany(),
+  pdfTemplates: () => prisma.pdfTemplate.findMany(),
+  rentChanges: () => prisma.rentChange.findMany(),
+  vpiEntries: () => prisma.vpiEntry.findMany(),
+  documents: () => prisma.document.findMany(),
+  heatingSystems: () => prisma.heatingSystem.findMany(),
+  heatingSystemUnits: () => prisma.heatingSystemUnit.findMany(),
+  heatingOilTanks: () => prisma.heatingOilTank.findMany(),
+  heatingOilDeliveries: () => prisma.heatingOilDelivery.findMany(),
+  oilInventoryLots: () => prisma.oilInventoryLot.findMany(),
+  oilStockReadings: () => prisma.oilStockReading.findMany(),
+  oilFoxDevices: () => prisma.oilFoxDevice.findMany(),
+  oilDeliveryCandidates: () => prisma.oilDeliveryCandidate.findMany(),
+  oilFoxSyncStates: () => prisma.oilFoxSyncState.findMany(),
+  electricityContracts: () => prisma.electricityContract.findMany(),
+  electricityTariffs: () => prisma.electricityTariff.findMany(),
+  electricityMeters: () => prisma.electricityMeter.findMany(),
+  electricityReadings: () => prisma.electricityReading.findMany(),
+  electricityReadingAudits: () => prisma.electricityReadingAudit.findMany(),
+  externalBillingClosings: () => prisma.externalBillingClosing.findMany(),
+  externalBillingClosingTenants: () =>
+    prisma.externalBillingClosingTenant.findMany(),
+  leaseFinancialPeriods: () => prisma.leaseFinancialPeriod.findMany(),
+  prepaymentComponents: () => prisma.prepaymentComponent.findMany(),
+  billingSnapshots: () => prisma.billingSnapshot.findMany(),
+  costAllocations: () => prisma.costAllocation.findMany(),
+  oilLotConsumptions: () => prisma.oilLotConsumption.findMany(),
 };
 
 export function GET() {
   return apiHandler(async () => {
     await requireAuth();
-    const entries = await Promise.all(Object.entries(modelReads).map(async ([key, read]) => [key, await read()] as const));
-    const body = serializeExact({ version: 2, exportedAt: new Date().toISOString(), data: Object.fromEntries(entries) });
-    return new Response(JSON.stringify(body, null, 2), { headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="vermieterme-backup-v2-${new Date().toISOString().slice(0, 10)}.json"` } });
+    const entries = await Promise.all(
+      Object.entries(modelReads).map(
+        async ([key, read]) => [key, await read()] as const,
+      ),
+    );
+    const body = serializeExact({
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      data: Object.fromEntries(entries),
+    });
+    return new Response(JSON.stringify(body, null, 2), {
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": `attachment; filename="vermieterme-backup-v3-${new Date().toISOString().slice(0, 10)}.json"`,
+      },
+    });
   });
 }
 
-function rows(data: Record<string, unknown>, key: string) { return Array.isArray(data[key]) ? data[key] as never[] : []; }
-
+const RESTORE_ORDER: Array<[string, keyof typeof prisma]> = [
+  ["properties", "property"],
+  ["costCategories", "costCategory"],
+  ["units", "unit"],
+  ["tenants", "tenant"],
+  ["billingPeriods", "billingPeriod"],
+  ["documents", "document"],
+  ["propertyTaxSettings", "propertyTaxSetting"],
+  ["heatingSystems", "heatingSystem"],
+  ["heatingSystemUnits", "heatingSystemUnit"],
+  ["heatingOilTanks", "heatingOilTank"],
+  ["oilFoxDevices", "oilFoxDevice"],
+  ["heatingOilDeliveries", "heatingOilDelivery"],
+  ["oilInventoryLots", "oilInventoryLot"],
+  ["oilFoxCsvImports", "oilFoxCsvImport"],
+  ["oilStockReadings", "oilStockReading"],
+  ["oilDeliveryCandidates", "oilDeliveryCandidate"],
+  ["oilFoxSyncStates", "oilFoxSyncState"],
+  ["electricityContracts", "electricityContract"],
+  ["electricityTariffs", "electricityTariff"],
+  ["electricityMeters", "electricityMeter"],
+  ["electricityReadings", "electricityReading"],
+  ["electricityReadingAudits", "electricityReadingAudit"],
+  ["externalBillingClosings", "externalBillingClosing"],
+  ["externalBillingClosingTenants", "externalBillingClosingTenant"],
+  ["leaseFinancialPeriods", "leaseFinancialPeriod"],
+  ["prepaymentComponents", "prepaymentComponent"],
+  ["costs", "cost"],
+  ["prepayments", "prepayment"],
+  ["billingSnapshots", "billingSnapshot"],
+  ["costAllocations", "costAllocation"],
+  ["oilLotConsumptions", "oilLotConsumption"],
+  ["categoryCalculationHeads", "categoryCalculationHead"],
+  ["statementRevisions", "statementRevision"],
+  ["costInvoices", "costInvoice"],
+  ["costInvoiceLines", "costInvoiceLine"],
+  ["leaseCostCategoryAgreements", "leaseCostCategoryAgreement"],
+  ["invoiceTemplates", "invoiceTemplate"],
+  ["invoiceAttachments", "invoiceAttachment"],
+  ["invoiceExtractionJobs", "invoiceExtractionJob"],
+  ["landlordInfo", "landlordInfo"],
+  ["pdfTemplates", "pdfTemplate"],
+  ["rentChanges", "rentChange"],
+  ["vpiEntries", "vpiEntry"],
+];
 export function POST(request: Request) {
   return apiHandler(async () => {
     await requireAuth();
-    const body = await request.json() as { version?: number; data?: Record<string, unknown> };
-    if ((body.version !== 1 && body.version !== 2) || !body.data) throw new ApiError("Ungültiges Backup-Format", 400);
-    const d = body.data;
-    for (const key of ["properties", "units", "tenants", "costCategories", "billingPeriods"]) if (!Array.isArray(d[key])) throw new ApiError(`Backup-Tabelle ${key} fehlt`, 400);
+    const body = (await request.json()) as {
+      version: number;
+      data: Record<string, unknown>;
+    };
+    if (body.version !== 3 || !body.data)
+      throw new ApiError(
+        "Version-3-Backup erforderlich; ältere Sicherungen isoliert migrieren",
+        400,
+      );
+    for (const key of Object.keys(modelReads))
+      if (!Array.isArray(body.data[key]))
+        throw new ApiError(`Backup-Tabelle ${key} fehlt`, 400);
+    if (
+      (await prisma.billingSnapshot.count()) ||
+      (await prisma.property.count())
+    )
+      throw new ApiError(
+        "Wiederherstellung nur in eine leere Datenbank. Vorhandene Daten durch verifizierten SQLite-/Uploads-Backup wiederherstellen.",
+        409,
+      );
+    // JSON contains metadata; the separate uploads archive must already be restored.
+    for (const document of body.data.documents as Array<{
+      fileName: string;
+      fileHash: string | null;
+    }>) {
+      if (path.basename(document.fileName) !== document.fileName)
+        throw new ApiError("Ungültiger Dateiname im Backup", 400);
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(
+          path.join(process.cwd(), "data/uploads", document.fileName),
+        );
+      } catch {
+        throw new ApiError(
+          "Upload-Archiv vor dem Datenimport wiederherstellen",
+          400,
+        );
+      }
+      if (
+        document.fileHash &&
+        createHash("sha256").update(bytes).digest("hex") !== document.fileHash
+      )
+        throw new ApiError(
+          "Upload-Prüfsumme stimmt nicht mit dem Backup überein",
+          400,
+        );
+    }
     await prisma.$transaction(async (tx) => {
-      await tx.oilLotConsumption.deleteMany(); await tx.costAllocation.deleteMany(); await tx.billingSnapshot.deleteMany(); await tx.prepaymentComponent.deleteMany(); await tx.leaseFinancialPeriod.deleteMany();
-      await tx.electricityReadingAudit.deleteMany(); await tx.electricityReading.deleteMany(); await tx.electricityMeter.deleteMany(); await tx.electricityTariff.deleteMany(); await tx.electricityContract.deleteMany(); await tx.externalBillingClosingTenant.deleteMany(); await tx.externalBillingClosing.deleteMany();
-      await tx.oilDeliveryCandidate.deleteMany(); await tx.oilStockReading.deleteMany(); await tx.oilInventoryLot.deleteMany(); await tx.heatingOilDelivery.deleteMany(); await tx.oilFoxDevice.deleteMany(); await tx.heatingOilTank.deleteMany(); await tx.heatingSystemUnit.deleteMany(); await tx.heatingSystem.deleteMany(); await tx.oilFoxSyncState.deleteMany();
-      await tx.document.deleteMany(); await tx.cost.deleteMany(); await tx.prepayment.deleteMany(); await tx.tenant.deleteMany(); await tx.billingPeriod.deleteMany(); await tx.unit.deleteMany(); await tx.property.deleteMany(); await tx.costCategory.deleteMany(); await tx.rentChange.deleteMany(); await tx.landlordInfo.deleteMany(); await tx.pdfTemplate.deleteMany(); await tx.vpiEntry.deleteMany();
-      if (rows(d, "properties").length) await tx.property.createMany({ data: rows(d, "properties") }); if (rows(d, "costCategories").length) await tx.costCategory.createMany({ data: rows(d, "costCategories") }); if (rows(d, "landlordInfo").length) await tx.landlordInfo.createMany({ data: rows(d, "landlordInfo") }); if (rows(d, "units").length) await tx.unit.createMany({ data: rows(d, "units") }); if (rows(d, "billingPeriods").length) await tx.billingPeriod.createMany({ data: rows(d, "billingPeriods") }); if (rows(d, "tenants").length) await tx.tenant.createMany({ data: rows(d, "tenants") });
-      if (rows(d, "heatingSystems").length) await tx.heatingSystem.createMany({ data: rows(d, "heatingSystems") }); if (rows(d, "heatingSystemUnits").length) await tx.heatingSystemUnit.createMany({ data: rows(d, "heatingSystemUnits") }); if (rows(d, "heatingOilTanks").length) await tx.heatingOilTank.createMany({ data: rows(d, "heatingOilTanks") }); if (rows(d, "oilFoxDevices").length) await tx.oilFoxDevice.createMany({ data: rows(d, "oilFoxDevices") }); if (rows(d, "heatingOilDeliveries").length) await tx.heatingOilDelivery.createMany({ data: rows(d, "heatingOilDeliveries") }); if (rows(d, "oilInventoryLots").length) await tx.oilInventoryLot.createMany({ data: rows(d, "oilInventoryLots") }); if (rows(d, "oilStockReadings").length) await tx.oilStockReading.createMany({ data: rows(d, "oilStockReadings") }); if (rows(d, "oilDeliveryCandidates").length) await tx.oilDeliveryCandidate.createMany({ data: rows(d, "oilDeliveryCandidates") }); if (rows(d, "oilFoxSyncStates").length) await tx.oilFoxSyncState.createMany({ data: rows(d, "oilFoxSyncStates") });
-      if (rows(d, "electricityContracts").length) await tx.electricityContract.createMany({ data: rows(d, "electricityContracts") }); if (rows(d, "electricityTariffs").length) await tx.electricityTariff.createMany({ data: rows(d, "electricityTariffs") }); if (rows(d, "electricityMeters").length) await tx.electricityMeter.createMany({ data: rows(d, "electricityMeters") }); if (rows(d, "electricityReadings").length) await tx.electricityReading.createMany({ data: rows(d, "electricityReadings") }); if (rows(d, "electricityReadingAudits").length) await tx.electricityReadingAudit.createMany({ data: rows(d, "electricityReadingAudits") }); if (rows(d, "externalBillingClosings").length) await tx.externalBillingClosing.createMany({ data: rows(d, "externalBillingClosings") }); if (rows(d, "externalBillingClosingTenants").length) await tx.externalBillingClosingTenant.createMany({ data: rows(d, "externalBillingClosingTenants") });
-      if (rows(d, "leaseFinancialPeriods").length) await tx.leaseFinancialPeriod.createMany({ data: rows(d, "leaseFinancialPeriods") }); if (rows(d, "prepaymentComponents").length) await tx.prepaymentComponent.createMany({ data: rows(d, "prepaymentComponents") }); if (rows(d, "costs").length) await tx.cost.createMany({ data: rows(d, "costs") }); if (rows(d, "prepayments").length) await tx.prepayment.createMany({ data: rows(d, "prepayments") }); if (rows(d, "billingSnapshots").length) await tx.billingSnapshot.createMany({ data: rows(d, "billingSnapshots") }); if (rows(d, "costAllocations").length) await tx.costAllocation.createMany({ data: rows(d, "costAllocations") }); if (rows(d, "oilLotConsumptions").length) await tx.oilLotConsumption.createMany({ data: rows(d, "oilLotConsumptions") });
-      if (rows(d, "pdfTemplates").length) await tx.pdfTemplate.createMany({ data: rows(d, "pdfTemplates") }); if (rows(d, "rentChanges").length) await tx.rentChange.createMany({ data: rows(d, "rentChanges") }); if (rows(d, "vpiEntries").length) await tx.vpiEntry.createMany({ data: rows(d, "vpiEntries") }); if (rows(d, "documents").length) await tx.document.createMany({ data: rows(d, "documents") });
+      // The migration inserts the water category even in an otherwise empty database.
+      const existingCategories = await tx.costCategory.findMany();
+      if (existingCategories.some((row) => row.id !== "krandorf-water"))
+        throw new ApiError(
+          "Wiederherstellung benötigt eine leere Datenbank ohne eigene Kostenarten",
+          409,
+        );
+      await tx.costCategory.deleteMany();
+      for (const [key, model] of RESTORE_ORDER) {
+        const rows = body.data[key] as Record<string, unknown>[];
+        const prepared = rows.map((row) =>
+          Object.fromEntries(
+            Object.entries(row).map(([field, value]) => [
+              field,
+              value !== null &&
+              typeof value === "string" &&
+              (field.endsWith("Cents") ||
+                [
+                  "priceMicroEuroPerKwh",
+                  "annualRateMicroCentsPerM2",
+                  "co2Grams",
+                  "emissionFactorMicrogWh",
+                ].includes(field))
+                ? BigInt(value)
+                : value,
+            ]),
+          ),
+        );
+        if (prepared.length)
+          await (
+            tx[model as keyof typeof tx] as unknown as {
+              createMany: (args: {
+                data: Record<string, unknown>[];
+              }) => Promise<unknown>;
+            }
+          ).createMany({ data: prepared });
+      }
     });
-    return jsonOk({ success: true, version: body.version });
+    return jsonOk({ success: true, version: 3 });
   });
 }

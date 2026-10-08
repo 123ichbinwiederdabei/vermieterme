@@ -1,5 +1,12 @@
+import { buildAllTenantStatements } from "@/lib/billing-statement";
 import { prisma } from "@/lib/prisma";
-import { apiHandler, requireAuth, jsonOk, jsonCreated, ApiError } from "@/lib/api-utils";
+import {
+  apiHandler,
+  requireAuth,
+  jsonOk,
+  jsonCreated,
+  ApiError,
+} from "@/lib/api-utils";
 
 export function GET() {
   return apiHandler(async () => {
@@ -18,7 +25,33 @@ export function GET() {
       orderBy: { startDate: "desc" },
     });
 
-    return jsonOk(billingPeriods);
+    return jsonOk(
+      await Promise.all(
+        billingPeriods.map(async (period) => {
+          try {
+            const statements = await buildAllTenantStatements(period.id);
+            const actual = statements.reduce(
+              (sum, statement) => sum + BigInt(statement.totalActualCents),
+              0n,
+            );
+            const prepaid = statements.reduce(
+              (sum, statement) => sum + BigInt(statement.totalPrepaymentCents),
+              0n,
+            );
+            return {
+              ...period,
+              summary: {
+                totalCostsCents: actual.toString(),
+                totalPrepaymentCents: prepaid.toString(),
+                differenceCents: (actual - prepaid).toString(),
+              },
+            };
+          } catch {
+            return { ...period, summary: null };
+          }
+        }),
+      ),
+    );
   });
 }
 
@@ -39,27 +72,35 @@ export function POST(request: Request) {
       throw new ApiError("Das Enddatum muss nach dem Beginndatum liegen", 400);
     }
 
-    const closing = await prisma.externalBillingClosing.findFirst({ where: { propertyId, closingDate: { gte: start } }, orderBy: { closingDate: "desc" } });
-    if (closing) throw new ApiError(`Für dieses Objekt ist ein externer Abschluss bis ${closing.closingDate.toLocaleDateString("de-DE")} dokumentiert. Neue Abrechnungen dürfen erst am Folgetag beginnen.`, 409);
+    const closing = await prisma.externalBillingClosing.findFirst({
+      where: { propertyId, closingDate: { gte: start } },
+      orderBy: { closingDate: "desc" },
+    });
+    if (closing)
+      throw new ApiError(
+        `Für dieses Objekt ist ein externer Abschluss bis ${closing.closingDate.toLocaleDateString("de-DE")} dokumentiert. Neue Abrechnungen dürfen erst am Folgetag beginnen.`,
+        409,
+      );
 
     // Check for overlapping billing periods for the same property
     const overlapping = await prisma.billingPeriod.findFirst({
       where: {
         propertyId,
         status: { not: "SUPERSEDED" },
-        AND: [
-          { startDate: { lt: end } },
-          { endDate: { gt: start } },
-        ],
+        AND: [{ startDate: { lte: end } }, { endDate: { gte: start } }],
       },
     });
 
     if (overlapping) {
-      const overlapStart = new Date(overlapping.startDate).toLocaleDateString("de-DE");
-      const overlapEnd = new Date(overlapping.endDate).toLocaleDateString("de-DE");
+      const overlapStart = new Date(overlapping.startDate).toLocaleDateString(
+        "de-DE",
+      );
+      const overlapEnd = new Date(overlapping.endDate).toLocaleDateString(
+        "de-DE",
+      );
       throw new ApiError(
         `Überlappender Abrechnungszeitraum existiert bereits: ${overlapStart} – ${overlapEnd}`,
-        409
+        409,
       );
     }
 
@@ -74,7 +115,10 @@ export function POST(request: Request) {
     }
 
     if (property._count.units === 0) {
-      throw new ApiError("Das Objekt hat keine Wohnungen. Bitte legen Sie zuerst Wohnungen an.", 400);
+      throw new ApiError(
+        "Das Objekt hat keine Wohnungen. Bitte legen Sie zuerst Wohnungen an.",
+        400,
+      );
     }
 
     const billingPeriod = await prisma.billingPeriod.create({
@@ -101,6 +145,7 @@ export function POST(request: Request) {
               billingPeriodId: billingPeriod.id,
               costCategoryId: c.costCategoryId,
               totalAmount: c.totalAmount,
+              totalAmountCents: c.totalAmountCents,
               unitAmount: c.unitAmount,
               reviewed: false,
             })),

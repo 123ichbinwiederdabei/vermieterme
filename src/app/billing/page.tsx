@@ -2,9 +2,15 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { centsToEuro } from "@/lib/money";
 import { Nav } from "@/components/nav";
-import { formatDate, formatCurrency } from "@/lib/format";
-import { billingPeriodCoversCalendarYear, getBillingStatus, calculateBillingTotals, getUnreviewedCount, isActiveBillingPeriod } from "@/lib/billing";
+import { formatDate } from "@/lib/format";
+import {
+  billingPeriodCoversCalendarYear,
+  getBillingStatus,
+  getUnreviewedCount,
+  isActiveBillingPeriod,
+} from "@/lib/billing";
 import { useMultiFetch } from "@/hooks/use-fetch";
 import { apiPost, apiDelete } from "@/hooks/use-api-mutation";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
@@ -25,7 +31,10 @@ export default function BillingPage() {
     properties: "/api/properties",
   });
 
-  const billingPeriods = useMemo(() => data.billingPeriods ?? [], [data.billingPeriods]);
+  const billingPeriods = useMemo(
+    () => data.billingPeriods ?? [],
+    [data.billingPeriods],
+  );
   const properties = useMemo(() => data.properties ?? [], [data.properties]);
 
   const [showNewForm, setShowNewForm] = useState(false);
@@ -49,7 +58,13 @@ export default function BillingPage() {
       copyFromId: form.copyFromId || null,
     });
     if (res.ok) {
-      setForm({ propertyId: "", startDate: "", endDate: "", billingDate: "", copyFromId: "" });
+      setForm({
+        propertyId: "",
+        startDate: "",
+        endDate: "",
+        billingDate: "",
+        copyFromId: "",
+      });
       setShowNewForm(false);
       await refetch();
     } else {
@@ -66,7 +81,10 @@ export default function BillingPage() {
   const grouped = useMemo(() => {
     const groups: Record<
       string,
-      { property: BillingPeriodWithProperty["property"]; periods: BillingPeriodWithProperty[] }
+      {
+        property: BillingPeriodWithProperty["property"];
+        periods: BillingPeriodWithProperty[];
+      }
     > = {};
     for (const bp of billingPeriods) {
       if (!groups[bp.propertyId]) {
@@ -88,18 +106,25 @@ export default function BillingPage() {
     }> = [];
 
     for (const prop of properties) {
-      const propPeriods = billingPeriods.filter((bp) => bp.propertyId === prop.id && isActiveBillingPeriod(bp));
+      const propPeriods = billingPeriods.filter(
+        (bp) => bp.propertyId === prop.id && isActiveBillingPeriod(bp),
+      );
 
       // Check if a period covering the previous year already exists
-      const hasPreviousYear = propPeriods.some((bp) => billingPeriodCoversCalendarYear(bp, previousYear));
+      const hasPreviousYear = propPeriods.some((bp) =>
+        billingPeriodCoversCalendarYear(bp, previousYear),
+      );
 
       if (hasPreviousYear) continue;
 
       // Find the most recent period to copy from (likely the year before)
       const previousYearStart = Date.UTC(previousYear, 0, 1);
-      const sorted = propPeriods.filter((bp) => new Date(bp.endDate).getTime() < previousYearStart).sort(
-        (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
-      );
+      const sorted = propPeriods
+        .filter((bp) => new Date(bp.endDate).getTime() < previousYearStart)
+        .sort(
+          (a, b) =>
+            new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
+        );
 
       if (sorted.length > 0) {
         suggestions.push({
@@ -113,7 +138,11 @@ export default function BillingPage() {
     return suggestions;
   }, [properties, billingPeriods]);
 
-  async function handleQuickCreate(propertyId: string, sourceId: string, previousYear: number) {
+  async function handleQuickCreate(
+    propertyId: string,
+    sourceId: string,
+    previousYear: number,
+  ) {
     setCreateError(null);
     const res = await apiPost("/api/billing-periods", {
       propertyId,
@@ -138,7 +167,9 @@ export default function BillingPage() {
   const previousPeriodOptions: ComboboxOption[] = useMemo(() => {
     if (!form.propertyId) return [];
     return billingPeriods
-      .filter((bp) => bp.propertyId === form.propertyId && isActiveBillingPeriod(bp))
+      .filter(
+        (bp) => bp.propertyId === form.propertyId && isActiveBillingPeriod(bp),
+      )
       .map((bp) => ({
         value: bp.id,
         label: `${formatDate(bp.startDate)} – ${formatDate(bp.endDate)}`,
@@ -173,7 +204,13 @@ export default function BillingPage() {
           <button
             onClick={() => {
               setShowNewForm(!showNewForm);
-              setForm({ propertyId: "", startDate: "", endDate: "", billingDate: "", copyFromId: "" });
+              setForm({
+                propertyId: "",
+                startDate: "",
+                endDate: "",
+                billingDate: "",
+                copyFromId: "",
+              });
             }}
             className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800"
           >
@@ -211,7 +248,9 @@ export default function BillingPage() {
                   type="date"
                   required
                   value={form.startDate}
-                  onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, startDate: e.target.value })
+                  }
                   className={`w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 ${!form.startDate ? "text-zinc-400" : ""}`}
                 />
               </div>
@@ -223,7 +262,9 @@ export default function BillingPage() {
                   type="date"
                   required
                   value={form.endDate}
-                  onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, endDate: e.target.value })
+                  }
                   className={`w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 ${!form.endDate ? "text-zinc-400" : ""}`}
                 />
               </div>
@@ -266,7 +307,10 @@ export default function BillingPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { setShowNewForm(false); setCreateError(null); }}
+                onClick={() => {
+                  setShowNewForm(false);
+                  setCreateError(null);
+                }}
                 className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
               >
                 Abbrechen
@@ -284,13 +328,23 @@ export default function BillingPage() {
                 className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4"
               >
                 <div className="text-sm text-zinc-700">
-                  <span className="font-medium">{s.property.street}, {s.property.city}</span>
+                  <span className="font-medium">
+                    {s.property.street}, {s.property.city}
+                  </span>
                   {" — "}
                   Noch keine Abrechnung f&uuml;r {s.previousYear} vorhanden.
-                  Daten aus der letzten Abrechnung ({formatDate(s.sourcePeriod.startDate)} &ndash; {formatDate(s.sourcePeriod.endDate)}) &uuml;bernehmen?
+                  Daten aus der letzten Abrechnung (
+                  {formatDate(s.sourcePeriod.startDate)} &ndash;{" "}
+                  {formatDate(s.sourcePeriod.endDate)}) &uuml;bernehmen?
                 </div>
                 <button
-                  onClick={() => handleQuickCreate(s.property.id, s.sourcePeriod.id, s.previousYear)}
+                  onClick={() =>
+                    handleQuickCreate(
+                      s.property.id,
+                      s.sourcePeriod.id,
+                      s.previousYear,
+                    )
+                  }
                   className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800"
                 >
                   Abrechnung {s.previousYear} erstellen
@@ -325,18 +379,10 @@ export default function BillingPage() {
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {periods.map((bp) => {
                     const status = getBillingStatus(bp);
-                    const hasCosts = bp.costs && bp.costs.length > 0;
-                    const totals = hasCosts
-                      ? calculateBillingTotals(
-                          bp.costs!,
-                          bp.prepayments ?? [],
-                          bp.startDate,
-                          bp.endDate
-                        )
-                      : null;
+                    const totals = bp.summary ?? null;
                     const unreviewedCount = getUnreviewedCount(
                       bp.costs ?? [],
-                      bp.prepayments ?? []
+                      bp.prepayments ?? [],
                     );
                     return (
                       <div
@@ -365,7 +411,9 @@ export default function BillingPage() {
                         <div className="mb-4 space-y-1 text-sm text-zinc-600">
                           {bp.billingDate && (
                             <p>
-                              <span className="text-zinc-500">Abrechnungsdatum:</span>{" "}
+                              <span className="text-zinc-500">
+                                Abrechnungsdatum:
+                              </span>{" "}
                               {formatDate(bp.billingDate)}
                             </p>
                           )}
@@ -383,7 +431,9 @@ export default function BillingPage() {
                           )}
                           {bp._count && bp._count.costs > 0 && (
                             <p>
-                              <span className="text-zinc-500">Kostenarten:</span>{" "}
+                              <span className="text-zinc-500">
+                                Kostenarten:
+                              </span>{" "}
                               {bp._count.costs}
                             </p>
                           )}
@@ -392,36 +442,44 @@ export default function BillingPage() {
                         {totals && (
                           <div className="mb-4 space-y-1 rounded-lg bg-zinc-50 p-3 text-sm">
                             <p className="text-zinc-600">
-                              <span className="text-zinc-500">Kosten gesamt:</span>{" "}
-                              {formatCurrency(totals.totalCosts)}
+                              <span className="text-zinc-500">
+                                Kosten gesamt:
+                              </span>{" "}
+                              {centsToEuro(totals.totalCostsCents)}
                             </p>
                             <p className="text-zinc-600">
                               <span className="text-zinc-500">Ihr Anteil:</span>{" "}
-                              {formatCurrency(totals.totalUnitCosts)}
+                              {centsToEuro(totals.totalCostsCents)}
                             </p>
                             <p className="text-zinc-600">
-                              <span className="text-zinc-500">Vorauszahlungen:</span>{" "}
-                              {formatCurrency(totals.totalPrepayment)}
+                              <span className="text-zinc-500">
+                                Vorauszahlungen:
+                              </span>{" "}
+                              {centsToEuro(totals.totalPrepaymentCents)}
                             </p>
                             <p
                               className={`font-medium ${
-                                totals.difference < 0
+                                BigInt(totals.differenceCents) < 0n
                                   ? "text-red-600"
                                   : "text-green-600"
                               }`}
                             >
                               <span
                                 className={
-                                  totals.difference < 0
+                                  BigInt(totals.differenceCents) < 0n
                                     ? "text-red-500"
                                     : "text-green-500"
                                 }
                               >
-                                {totals.difference < 0
+                                {BigInt(totals.differenceCents) < 0n
                                   ? "Nachzahlung:"
                                   : "Erstattung:"}
                               </span>{" "}
-                              {formatCurrency(Math.abs(totals.difference))}
+                              {centsToEuro(
+                                BigInt(totals.differenceCents) < 0n
+                                  ? -BigInt(totals.differenceCents)
+                                  : BigInt(totals.differenceCents),
+                              )}
                             </p>
                           </div>
                         )}

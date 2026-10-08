@@ -18,6 +18,8 @@ interface DocumentUploadProps {
   category?: string;
   label?: string;
   accept?: string;
+  readOnly?: boolean;
+  onUploaded?: () => void;
 }
 
 export function DocumentUpload({
@@ -28,8 +30,11 @@ export function DocumentUpload({
   category = "other",
   label = "Dokument hochladen",
   accept = ".pdf,.jpg,.jpeg,.png,.webp",
+  readOnly = false,
+  onUploaded,
 }: DocumentUploadProps) {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -38,7 +43,8 @@ export function DocumentUpload({
     const params = new URLSearchParams();
     if (billingPeriodId) params.set("billingPeriodId", billingPeriodId);
     if (tenantId) params.set("tenantId", tenantId);
-    if (heatingOilDeliveryId) params.set("heatingOilDeliveryId", heatingOilDeliveryId);
+    if (heatingOilDeliveryId)
+      params.set("heatingOilDeliveryId", heatingOilDeliveryId);
     if (costInvoiceId) params.set("costInvoiceId", costInvoiceId);
 
     try {
@@ -48,13 +54,19 @@ export function DocumentUpload({
         setDocuments(
           category
             ? docs.filter((d: Document) => d.category === category)
-            : docs
+            : docs,
         );
       }
     } catch (error) {
       console.error("Failed to fetch documents:", error);
     }
-  }, [billingPeriodId, tenantId, heatingOilDeliveryId, costInvoiceId, category]);
+  }, [
+    billingPeriodId,
+    tenantId,
+    heatingOilDeliveryId,
+    costInvoiceId,
+    category,
+  ]);
 
   useEffect(() => {
     fetchDocuments();
@@ -65,13 +77,15 @@ export function DocumentUpload({
     if (!file) return;
 
     setUploading(true);
+    setError(null);
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("category", category);
       if (billingPeriodId) formData.append("billingPeriodId", billingPeriodId);
       if (tenantId) formData.append("tenantId", tenantId);
-      if (heatingOilDeliveryId) formData.append("heatingOilDeliveryId", heatingOilDeliveryId);
+      if (heatingOilDeliveryId)
+        formData.append("heatingOilDeliveryId", heatingOilDeliveryId);
       if (costInvoiceId) formData.append("costInvoiceId", costInvoiceId);
 
       const res = await fetch("/api/documents", {
@@ -81,9 +95,13 @@ export function DocumentUpload({
 
       if (res.ok) {
         await fetchDocuments();
+        onUploaded?.();
+      } else {
+        const data = await res.json();
+        setError(data.error || "Upload fehlgeschlagen");
       }
-    } catch (error) {
-      console.error("Upload failed:", error);
+    } catch {
+      setError("Upload fehlgeschlagen");
     } finally {
       setUploading(false);
       if (fileInputRef.current) {
@@ -98,6 +116,7 @@ export function DocumentUpload({
       const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
       if (res.ok) {
         await fetchDocuments();
+        onUploaded?.();
       }
     } catch (error) {
       console.error("Delete failed:", error);
@@ -121,45 +140,86 @@ export function DocumentUpload({
               >
                 <span className="text-zinc-400">
                   {doc.mimeType === "application/pdf" ? (
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+                      />
                     </svg>
                   ) : (
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z"
+                      />
                     </svg>
                   )}
                 </span>
-                <span className="max-w-[200px] truncate">{doc.originalName}</span>
+                <span className="max-w-[200px] truncate">
+                  {doc.originalName}
+                </span>
                 <span className="text-xs text-zinc-400">
                   ({formatFileSize(doc.size)})
                 </span>
               </a>
-              <button
-                onClick={() => setDeleteTarget(doc.id)}
-                className="rounded border border-red-200 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50"
-              >
-                Entfernen
-              </button>
+              {!readOnly && (
+                <button
+                  onClick={() => setDeleteTarget(doc.id)}
+                  className="rounded border border-red-200 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                >
+                  Entfernen
+                </button>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-        </svg>
-        {uploading ? "Lade hoch..." : label}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={accept}
-          onChange={handleUpload}
-          disabled={uploading}
-          className="hidden"
-        />
-      </label>
+      {error && (
+        <p role="alert" className="mb-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      {!readOnly && (
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
+          <svg
+            className="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+            />
+          </svg>
+          {uploading ? "Lade hoch..." : label}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={accept}
+            onChange={handleUpload}
+            disabled={uploading}
+            className="hidden"
+          />
+        </label>
+      )}
 
       <ConfirmDialog
         open={deleteTarget !== null}

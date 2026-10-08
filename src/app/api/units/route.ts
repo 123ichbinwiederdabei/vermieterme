@@ -1,3 +1,4 @@
+import { invalidateProperty } from "@/lib/billing-freshness";
 import { prisma } from "@/lib/prisma";
 import { apiHandler, requireAuth, jsonOk, jsonCreated } from "@/lib/api-utils";
 
@@ -33,6 +34,7 @@ export function POST(request: Request) {
       },
     });
 
+    await invalidateProperty(unit.propertyId);
     return jsonCreated(unit);
   });
 }

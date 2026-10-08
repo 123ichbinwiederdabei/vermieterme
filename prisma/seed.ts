@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { categoryCode } from "../src/lib/invoice-categories";
 import { hash } from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -106,40 +107,186 @@ async function main() {
 
   // Cost Categories
   const categories = [
-    { id: "cat-1", name: "Gebäudeversicherung", distributionKey: "MEA", sortOrder: 1 },
+    {
+      id: "cat-1",
+      name: "Gebäudeversicherung",
+      distributionKey: "MEA",
+      sortOrder: 1,
+    },
     { id: "cat-2", name: "Gartenpflege", distributionKey: "MEA", sortOrder: 2 },
-    { id: "cat-3", name: "Gebäudereinigung", distributionKey: "MEA", sortOrder: 3 },
-    { id: "cat-4", name: "Wasser/Abwasser/Allgemeinstrom", distributionKey: "siehe Anlage", sortOrder: 4 },
-    { id: "cat-5", name: "Gehwegreinigung", distributionKey: "MEA", sortOrder: 5 },
-    { id: "cat-6", name: "Schornsteinfeger", distributionKey: "MEA", sortOrder: 6 },
-    { id: "cat-7", name: "Wartung Heizung", distributionKey: "siehe Anlage", sortOrder: 7 },
-    { id: "cat-8", name: "Grundsteuer", distributionKey: "laut Bescheid", sortOrder: 8 },
-    { id: "cat-9", name: "Abfall", distributionKey: "siehe Anlage", sortOrder: 9 },
-    { id: "cat-oil", name: "Heizöl", distributionKey: "AREA", calculationType: "HEATING_OIL", sortOrder: 10 },
-    { id: "cat-electricity", name: "Strom", distributionKey: "DIRECT_CONSUMPTION", calculationType: "ELECTRICITY", sortOrder: 11 },
-    { id: "cat-other-operating-costs", name: "Sonstige Betriebskosten", distributionKey: "siehe Anlage", calculationType: "MANUAL", sortOrder: 12 },
-    { id: "cat-small-wastewater", name: "Entwässerung – Kleinkläranlage", distributionKey: "AREA", calculationType: "MANUAL", sortOrder: 13 },
+    {
+      id: "cat-3",
+      name: "Gebäudereinigung",
+      distributionKey: "MEA",
+      sortOrder: 3,
+    },
+    {
+      id: "cat-4",
+      name: "Wasser/Abwasser/Allgemeinstrom",
+      distributionKey: "siehe Anlage",
+      sortOrder: 4,
+    },
+    {
+      id: "cat-5",
+      name: "Gehwegreinigung",
+      distributionKey: "MEA",
+      sortOrder: 5,
+    },
+    {
+      id: "cat-6",
+      name: "Schornsteinfeger",
+      distributionKey: "MEA",
+      sortOrder: 6,
+    },
+    {
+      id: "cat-7",
+      name: "Wartung Heizung",
+      distributionKey: "siehe Anlage",
+      sortOrder: 7,
+    },
+    {
+      id: "cat-8",
+      name: "Grundsteuer",
+      distributionKey: "laut Bescheid",
+      sortOrder: 8,
+    },
+    {
+      id: "cat-9",
+      name: "Abfall",
+      distributionKey: "siehe Anlage",
+      sortOrder: 9,
+    },
+    {
+      id: "cat-oil",
+      name: "Heizöl",
+      distributionKey: "AREA",
+      calculationType: "HEATING_OIL",
+      sortOrder: 10,
+    },
+    {
+      id: "cat-electricity",
+      name: "Strom",
+      distributionKey: "DIRECT_CONSUMPTION",
+      calculationType: "ELECTRICITY",
+      sortOrder: 11,
+    },
+    {
+      id: "cat-other-operating-costs",
+      name: "Sonstige Betriebskosten",
+      distributionKey: "siehe Anlage",
+      calculationType: "MANUAL",
+      sortOrder: 12,
+    },
+    {
+      id: "cat-small-wastewater",
+      name: "Entwässerung – Kleinkläranlage",
+      distributionKey: "AREA",
+      calculationType: "MANUAL",
+      sortOrder: 13,
+    },
   ];
 
   for (const cat of categories) {
     await prisma.costCategory.upsert({
       where: { id: cat.id },
       update: {},
-      create: cat,
+      create: { ...cat, code: categoryCode(cat) },
     });
   }
 
   const heating = await prisma.heatingSystem.upsert({
-    where: { id: "heating-1" }, update: {}, create: { id: "heating-1", propertyId: property.id, name: "Ölheizung", billingRegime: "SECTION_11_EXCEPTION", exceptionReasonCode: "NO_METERING", exceptionReason: "Demo: keine Wärmeverbrauchserfassung", exceptionValidFrom: new Date("2023-01-01") },
+    where: { id: "heating-1" },
+    update: {},
+    create: {
+      id: "heating-1",
+      propertyId: property.id,
+      name: "Ölheizung",
+      billingRegime: "SECTION_11_EXCEPTION",
+      exceptionReasonCode: "NO_METERING",
+      exceptionReason: "Demo: keine Wärmeverbrauchserfassung",
+      exceptionValidFrom: new Date("2023-01-01"),
+    },
   });
-  for (const unitId of [unitEG.id, unitOG.id]) await prisma.heatingSystemUnit.upsert({ where: { heatingSystemId_unitId: { heatingSystemId: heating.id, unitId } }, update: {}, create: { heatingSystemId: heating.id, unitId } });
-  await prisma.heatingOilTank.upsert({ where: { id: "tank-1" }, update: {}, create: { id: "tank-1", heatingSystemId: heating.id, name: "Gemeinsamer Heizöltank", capacityLiters: "5000", deliveryDetectionThresholdLiters: "200" } });
+  for (const unitId of [unitEG.id, unitOG.id])
+    await prisma.heatingSystemUnit.upsert({
+      where: {
+        heatingSystemId_unitId: { heatingSystemId: heating.id, unitId },
+      },
+      update: {},
+      create: { heatingSystemId: heating.id, unitId },
+    });
+  await prisma.heatingOilTank.upsert({
+    where: { id: "tank-1" },
+    update: {},
+    create: {
+      id: "tank-1",
+      heatingSystemId: heating.id,
+      name: "Gemeinsamer Heizöltank",
+      capacityLiters: "5000",
+      deliveryDetectionThresholdLiters: "200",
+    },
+  });
 
-  for (const [tenantId, coldRent, prepayment] of [["tenant-1", 85000n, 20000n], ["tenant-2", 95000n, 24000n]] as const) {
-    const financial = await prisma.leaseFinancialPeriod.upsert({ where: { id: `finance-${tenantId}` }, update: {}, create: { id: `finance-${tenantId}`, tenantId, validFrom: new Date(tenantId === "tenant-1" ? "2020-01-01" : "2022-06-01"), monthlyColdRentCents: coldRent, monthlyPrepaymentCents: prepayment, reason: "Mietbeginn" } });
-    await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-oil" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-oil", monthlyAmountCents: prepayment / 2n } });
-    await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-electricity" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-electricity", monthlyAmountCents: prepayment - prepayment / 2n } });
-    await prisma.prepaymentComponent.upsert({ where: { financialPeriodId_costCategoryId: { financialPeriodId: financial.id, costCategoryId: "cat-small-wastewater" } }, update: {}, create: { financialPeriodId: financial.id, costCategoryId: "cat-small-wastewater", monthlyAmountCents: 0n } });
+  for (const [tenantId, coldRent, prepayment] of [
+    ["tenant-1", 85000n, 20000n],
+    ["tenant-2", 95000n, 24000n],
+  ] as const) {
+    const financial = await prisma.leaseFinancialPeriod.upsert({
+      where: { id: `finance-${tenantId}` },
+      update: {},
+      create: {
+        id: `finance-${tenantId}`,
+        tenantId,
+        validFrom: new Date(
+          tenantId === "tenant-1" ? "2020-01-01" : "2022-06-01",
+        ),
+        monthlyColdRentCents: coldRent,
+        monthlyPrepaymentCents: prepayment,
+        reason: "Mietbeginn",
+      },
+    });
+    await prisma.prepaymentComponent.upsert({
+      where: {
+        financialPeriodId_costCategoryId: {
+          financialPeriodId: financial.id,
+          costCategoryId: "cat-oil",
+        },
+      },
+      update: {},
+      create: {
+        financialPeriodId: financial.id,
+        costCategoryId: "cat-oil",
+        monthlyAmountCents: prepayment / 2n,
+      },
+    });
+    await prisma.prepaymentComponent.upsert({
+      where: {
+        financialPeriodId_costCategoryId: {
+          financialPeriodId: financial.id,
+          costCategoryId: "cat-electricity",
+        },
+      },
+      update: {},
+      create: {
+        financialPeriodId: financial.id,
+        costCategoryId: "cat-electricity",
+        monthlyAmountCents: prepayment - prepayment / 2n,
+      },
+    });
+    await prisma.prepaymentComponent.upsert({
+      where: {
+        financialPeriodId_costCategoryId: {
+          financialPeriodId: financial.id,
+          costCategoryId: "cat-small-wastewater",
+        },
+      },
+      update: {},
+      create: {
+        financialPeriodId: financial.id,
+        costCategoryId: "cat-small-wastewater",
+        monthlyAmountCents: 0n,
+      },
+    });
   }
 
   // Billing Period 2023 (abgeschlossen)
@@ -157,15 +304,15 @@ async function main() {
 
   // Costs 2023
   const costs2023 = [
-    { costCategoryId: "cat-1", totalAmount: 2100.00, unitAmount: 525.00 },
-    { costCategoryId: "cat-2", totalAmount: 1800.00, unitAmount: 450.00 },
-    { costCategoryId: "cat-3", totalAmount: 240.00, unitAmount: 60.00 },
-    { costCategoryId: "cat-4", totalAmount: 1500.00, unitAmount: 350.00 },
-    { costCategoryId: "cat-5", totalAmount: 600.00, unitAmount: 150.00 },
-    { costCategoryId: "cat-6", totalAmount: 150.00, unitAmount: 37.50 },
-    { costCategoryId: "cat-7", totalAmount: 120.00, unitAmount: 30.00 },
-    { costCategoryId: "cat-8", totalAmount: 480.00, unitAmount: 120.00 },
-    { costCategoryId: "cat-9", totalAmount: 360.00, unitAmount: 90.00 },
+    { costCategoryId: "cat-1", totalAmount: 2100.0, unitAmount: 525.0 },
+    { costCategoryId: "cat-2", totalAmount: 1800.0, unitAmount: 450.0 },
+    { costCategoryId: "cat-3", totalAmount: 240.0, unitAmount: 60.0 },
+    { costCategoryId: "cat-4", totalAmount: 1500.0, unitAmount: 350.0 },
+    { costCategoryId: "cat-5", totalAmount: 600.0, unitAmount: 150.0 },
+    { costCategoryId: "cat-6", totalAmount: 150.0, unitAmount: 37.5 },
+    { costCategoryId: "cat-7", totalAmount: 120.0, unitAmount: 30.0 },
+    { costCategoryId: "cat-8", totalAmount: 480.0, unitAmount: 120.0 },
+    { costCategoryId: "cat-9", totalAmount: 360.0, unitAmount: 90.0 },
   ];
 
   for (const cost of costs2023) {
@@ -229,12 +376,12 @@ async function main() {
 
   // Costs 2024
   const costs2024 = [
-    { costCategoryId: "cat-1", totalAmount: 2200.00, unitAmount: 550.00 },
-    { costCategoryId: "cat-2", totalAmount: 1900.00, unitAmount: 475.00 },
-    { costCategoryId: "cat-3", totalAmount: 250.00, unitAmount: 62.50 },
-    { costCategoryId: "cat-4", totalAmount: 1600.00, unitAmount: 370.00 },
-    { costCategoryId: "cat-5", totalAmount: 620.00, unitAmount: 155.00 },
-    { costCategoryId: "cat-6", totalAmount: 160.00, unitAmount: 40.00 },
+    { costCategoryId: "cat-1", totalAmount: 2200.0, unitAmount: 550.0 },
+    { costCategoryId: "cat-2", totalAmount: 1900.0, unitAmount: 475.0 },
+    { costCategoryId: "cat-3", totalAmount: 250.0, unitAmount: 62.5 },
+    { costCategoryId: "cat-4", totalAmount: 1600.0, unitAmount: 370.0 },
+    { costCategoryId: "cat-5", totalAmount: 620.0, unitAmount: 155.0 },
+    { costCategoryId: "cat-6", totalAmount: 160.0, unitAmount: 40.0 },
   ];
 
   for (const cost of costs2024) {

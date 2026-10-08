@@ -1,8 +1,8 @@
 import { createHash } from "crypto";
+import { ALLOCATION_POLICY } from "@/lib/allocation-policy";
 import { prisma } from "@/lib/prisma";
 import {
   allocateCents,
-  calculateElectricityCostCents,
   calculateFifoConsumption,
   co2TenantPercent,
   daysInclusive,
@@ -11,10 +11,24 @@ import {
   splitUnitAmountAcrossTenants,
   toScaledInteger,
 } from "@/lib/energy-billing";
-import { fromScaledInteger, serializeExact } from "@/lib/billing-v2";
+import {
+  fromScaledInteger,
+  serializeExact,
+  roundFraction,
+} from "@/lib/billing-v2";
 import { ApiError } from "@/lib/api-utils";
 import { buildSmallWastewaterPreview } from "@/lib/cost-invoice-billing";
 import { buildManualCostPreview } from "@/lib/manual-cost-preview";
+import {
+  ELECTRICITY_DENOMINATOR,
+  maxDate,
+  minDate,
+  meterIntervals,
+  tariffStart,
+  tariffEnd,
+} from "@/lib/electricity-intervals";
+import { invoicePool } from "@/lib/invoice-pool";
+import { plantElectricity } from "@/lib/cost-invoice-billing";
 
 export interface EnergyPreview {
   kind: "HEATING_OIL" | "ELECTRICITY" | "SMALL_WASTEWATER";
@@ -40,50 +54,91 @@ export interface EnergyPreview {
   blockers: string[];
   warnings: string[];
   sourceFingerprint: string;
+  sourceData?: unknown;
 }
 
 function fingerprint(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(serializeExact(value))).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(serializeExact(value)))
+    .digest("hex");
 }
 
-function boundaryReading<T extends { readingDate: Date; quantityLiters: unknown; validationError?: string | null }>(readings: T[], target: Date) {
+function boundaryReading<
+  T extends {
+    readingDate: Date;
+    quantityLiters: unknown;
+    validationError?: string | null;
+  },
+>(readings: T[], target: Date) {
   // A nearby OilFox measurement is useful information, but it is not an
   // accounting boundary.  The user must enter/select a documented fallback.
   return readings
-    .filter((row) => row.quantityLiters != null && !row.validationError && isoDay(row.readingDate) === isoDay(target))
-    .sort((a, b) => Math.abs(a.readingDate.getTime() - target.getTime()) - Math.abs(b.readingDate.getTime() - target.getTime()))[0];
+    .filter(
+      (row) =>
+        row.quantityLiters != null &&
+        !row.validationError &&
+        isoDay(row.readingDate) === isoDay(target),
+    )
+    .sort(
+      (a, b) =>
+        Math.abs(a.readingDate.getTime() - target.getTime()) -
+        Math.abs(b.readingDate.getTime() - target.getTime()),
+    )[0];
 }
 
 function dateInside(value: Date, start: Date, end: Date): boolean {
   return value >= start && value <= end;
 }
 
-function intersect(startA: Date, endA: Date, startB: Date, endB: Date) {
-  const start = startA > startB ? startA : startB;
-  const end = endA < endB ? endA : endB;
-  return end >= start ? { start, end } : null;
-}
-
-function hasFinancialCoverage(tenant: { moveInDate: Date; moveOutDate: Date | null; financialPeriods: Array<{ validFrom: Date; validTo: Date | null }> }, start: Date, end: Date) {
+function hasFinancialCoverage(
+  tenant: {
+    moveInDate: Date;
+    moveOutDate: Date | null;
+    financialPeriods: Array<{ validFrom: Date; validTo: Date | null }>;
+  },
+  start: Date,
+  end: Date,
+) {
   const tenancyStart = tenant.moveInDate > start ? tenant.moveInDate : start;
-  const tenancyEnd = (tenant.moveOutDate ?? end) < end ? (tenant.moveOutDate ?? end) : end;
+  const tenancyEnd =
+    (tenant.moveOutDate ?? end) < end ? (tenant.moveOutDate ?? end) : end;
   if (tenancyEnd < tenancyStart) return true;
-  const periods = tenant.financialPeriods.map((row) => ({ start: row.validFrom > tenancyStart ? row.validFrom : tenancyStart, end: (row.validTo ?? tenancyEnd) < tenancyEnd ? (row.validTo ?? tenancyEnd) : tenancyEnd })).filter((row) => row.end >= row.start).sort((a, b) => a.start.getTime() - b.start.getTime());
+  const periods = tenant.financialPeriods
+    .map((row) => ({
+      start: row.validFrom > tenancyStart ? row.validFrom : tenancyStart,
+      end:
+        (row.validTo ?? tenancyEnd) < tenancyEnd
+          ? (row.validTo ?? tenancyEnd)
+          : tenancyEnd,
+    }))
+    .filter((row) => row.end >= row.start)
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
   let expected = tenancyStart.getTime();
-  for (const row of periods) { if (row.start.getTime() > expected) return false; expected = Math.max(expected, row.end.getTime() + 86_400_000); }
+  for (const row of periods) {
+    if (row.start.getTime() > expected) return false;
+    expected = Math.max(expected, row.end.getTime() + 86_400_000);
+  }
   return expected > tenancyEnd.getTime();
 }
 
 export async function buildHeatingOilPreview(
   billingPeriodId: string,
-  costCategoryId: string
+  costCategoryId: string,
 ): Promise<EnergyPreview> {
   const period = await prisma.billingPeriod.findUnique({
     where: { id: billingPeriodId },
     include: {
       property: {
         include: {
-          units: { include: { tenants: { include: { financialPeriods: { where: { supersededAt: null } } } } } },
+          units: {
+            include: {
+              tenants: {
+                include: {
+                  financialPeriods: { where: { supersededAt: null } },
+                },
+              },
+            },
+          },
           heatingSystems: {
             include: {
               units: true,
@@ -94,9 +149,32 @@ export async function buildHeatingOilPreview(
                     // Revisions of this billing period must start from the
                     // same inventory state as the original preview.  Its own
                     // active snapshot is superseded only after Apply.
-                    include: { consumptions: { where: { active: true, snapshot: { billingPeriodId: { not: billingPeriodId } } } } },
+                    include: {
+                      consumptions: {
+                        where: {
+                          active: true,
+                          snapshot: {
+                            billingPeriodId: { not: billingPeriodId },
+                            billingPeriod: {
+                              OR: [
+                                { id: billingPeriodId },
+                                {
+                                  copies: {
+                                    none: {
+                                      id: billingPeriodId,
+                                      revisionOfPeriodId: { not: null },
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                            activeHead: { isNot: null },
+                          },
+                        },
+                      },
+                    },
                   },
-                  deliveries: true,
+                  deliveries: { where: { revisions: { none: {} } } },
                   deliveryCandidates: true,
                 },
               },
@@ -108,20 +186,67 @@ export async function buildHeatingOilPreview(
   });
   if (!period) throw new ApiError("Abrechnungszeitraum nicht gefunden", 404);
   const system = period.property.heatingSystems[0];
-  if (!system) throw new ApiError("Für das Objekt ist kein Heizsystem konfiguriert", 400);
+  if (!system)
+    throw new ApiError("Für das Objekt ist kein Heizsystem konfiguriert", 400);
   const blockers: string[] = [];
   const warnings: string[] = [];
-  if (system.centralHotWater) blockers.push("Zentrale Warmwasserabrechnung ist derzeit deaktiviert.");
-  if (system.billingRegime === "STANDARD_HEIZKOSTENV" && system.consumptionSource === "NONE") {
-    blockers.push("Für das Standardregime fehlen Wärmeverbrauchsdaten.");
-  }
-  if (system.billingRegime === "SECTION_11_EXCEPTION" && !system.exceptionReason) {
-    blockers.push("Die dokumentierte Begründung für die §-11-Ausnahme fehlt.");
-  }
+  if (system.centralHotWater)
+    blockers.push("Zentrale Warmwasserabrechnung ist derzeit deaktiviert.");
+  if (system.billingRegime === "STANDARD_HEIZKOSTENV")
+    blockers.push(
+      "Standard-Heizkostenabrechnung bleibt bis zur implementierten Wärmeverbrauchsberechnung gesperrt.",
+    );
+  if (
+    system.billingRegime !== "STANDARD_HEIZKOSTENV" &&
+    !system.evidenceValidatedAt
+  )
+    blockers.push(
+      "Heizkostennachweis muss ausdrücklich geprüft und bestätigt sein.",
+    );
+  if (system.billingRegime === "SECTION_11_EXCEPTION") {
+    if (
+      !system.exceptionReason?.trim() ||
+      !["TECHNICALLY_IMPOSSIBLE", "UNECONOMIC", "OTHER_STATUTORY"].includes(
+        system.exceptionReasonCode ?? "",
+      ) ||
+      !system.exceptionDocumentId ||
+      !system.exceptionValidFrom ||
+      system.exceptionValidFrom > period.startDate ||
+      !system.exceptionValidTo ||
+      system.exceptionValidTo < period.endDate
+    )
+      blockers.push(
+        "§-11-Ausnahme: Grundcode, Begründung, Beleg und gültiger Zeitraum erforderlich.",
+      );
+  } else if (system.billingRegime === "SECTION_2_CONTRACTUAL_DEVIATION") {
+    if (
+      period.property.units.length > 2 ||
+      !period.property.units.some(
+        (unit) => unit.ownerOccupied && unit.id === system.ownerOccupiedUnitId,
+      ) ||
+      !system.contractualReason?.trim() ||
+      !system.contractualDocumentId ||
+      !system.contractualValidFrom ||
+      system.contractualValidFrom > period.startDate
+    )
+      blockers.push(
+        "§-2-Modus: Gebäude mit höchstens zwei Wohnungen, Eigentümerwohnung und Vertragsnachweis erforderlich.",
+      );
+  } else if (system.billingRegime !== "STANDARD_HEIZKOSTENV")
+    blockers.push("Nicht unterstützter Heizkostenmodus.");
   const connectedIds = new Set(system.units.map((row) => row.unitId));
-  const units = period.property.units.filter((unit) => connectedIds.has(unit.id));
-  for (const unit of units) if (!unit.areaM2 || toScaledInteger(unit.areaM2.toString()) <= 0n) blockers.push(`Wohnfläche für ${unit.name} fehlt.`);
-  for (const unit of units) for (const tenant of unit.tenants) if (!hasFinancialCoverage(tenant, period.startDate, period.endDate)) blockers.push(`Miet-/NK-Finanzperioden für ${tenant.firstName} ${tenant.lastName} decken den Abrechnungszeitraum nicht lückenlos ab.`);
+  const units = period.property.units.filter((unit) =>
+    connectedIds.has(unit.id),
+  );
+  for (const unit of units)
+    if (!unit.areaM2 || toScaledInteger(unit.areaM2.toString()) <= 0n)
+      blockers.push(`Wohnfläche für ${unit.name} fehlt.`);
+  for (const unit of units)
+    for (const tenant of unit.tenants)
+      if (!hasFinancialCoverage(tenant, period.startDate, period.endDate))
+        blockers.push(
+          `Miet-/NK-Finanzperioden für ${tenant.firstName} ${tenant.lastName} decken den Abrechnungszeitraum nicht lückenlos ab.`,
+        );
 
   let totalAmount = 0n;
   let totalCo2Cost = 0n;
@@ -132,89 +257,262 @@ export async function buildHeatingOilPreview(
   for (const tank of system.tanks) {
     const startReading = boundaryReading(tank.stockReadings, period.startDate);
     const endReading = boundaryReading(tank.stockReadings, period.endDate);
-    if (!startReading?.quantityLiters) blockers.push(`Valider Anfangstankstand für ${tank.name} fehlt.`);
-    if (!endReading?.quantityLiters) blockers.push(`Valider Endtankstand für ${tank.name} fehlt.`);
+    if (!startReading?.quantityLiters)
+      blockers.push(`Valider Anfangstankstand für ${tank.name} fehlt.`);
+    if (!endReading?.quantityLiters)
+      blockers.push(`Valider Endtankstand für ${tank.name} fehlt.`);
     if (!startReading?.quantityLiters || !endReading?.quantityLiters) continue;
-    const startGap = Math.round(Math.abs(startReading.readingDate.getTime() - period.startDate.getTime()) / 86_400_000);
-    const endGap = Math.round(Math.abs(endReading.readingDate.getTime() - period.endDate.getTime()) / 86_400_000);
-    if (startGap > 0 || endGap > 0) blockers.push(`Die Grenzmessung für ${tank.name} muss am Abrechnungsstichtag liegen oder als Ersatzmessung dokumentiert sein.`);
-    if (tank.deliveryCandidates.some((candidate) => candidate.status === "PENDING")) warnings.push(`${tank.name} hat ungeklärte mögliche Lieferungen.`);
-    if (tank.capacityLiters && toScaledInteger(endReading.quantityLiters.toString()) > toScaledInteger(tank.capacityLiters.toString())) blockers.push(`Endbestand für ${tank.name} überschreitet die Tankkapazität.`);
+    const startGap = Math.round(
+      Math.abs(
+        startReading.readingDate.getTime() - period.startDate.getTime(),
+      ) / 86_400_000,
+    );
+    const endGap = Math.round(
+      Math.abs(endReading.readingDate.getTime() - period.endDate.getTime()) /
+        86_400_000,
+    );
+    for (const reading of [startReading, endReading])
+      if (
+        reading.method === "DOCUMENTED_ESTIMATE" &&
+        (!reading.confirmed || !reading.note?.trim() || !reading.documentId)
+      )
+        blockers.push(
+          "Ersatz-Tankstand benötigt bestätigte Methode und Beleg.",
+        );
+    if (startGap > 0 || endGap > 0)
+      blockers.push(
+        `Die Grenzmessung für ${tank.name} muss am Abrechnungsstichtag liegen oder als Ersatzmessung dokumentiert sein.`,
+      );
+    if (
+      tank.deliveryCandidates.some(
+        (candidate) => candidate.status === "PENDING",
+      )
+    )
+      warnings.push(`${tank.name} hat ungeklärte mögliche Lieferungen.`);
+    if (
+      tank.capacityLiters &&
+      toScaledInteger(endReading.quantityLiters.toString()) >
+        toScaledInteger(tank.capacityLiters.toString())
+    )
+      blockers.push(
+        `Endbestand für ${tank.name} überschreitet die Tankkapazität.`,
+      );
     const delivered = tank.deliveries
-      .filter((delivery) => dateInside(delivery.deliveryDate, period.startDate, period.endDate))
-      .reduce((sum, delivery) => sum + toScaledInteger(delivery.quantityLiters.toString()), 0n);
-    const consumption = toScaledInteger(startReading.quantityLiters.toString()) + delivered - toScaledInteger(endReading.quantityLiters.toString());
+      .filter((delivery) =>
+        dateInside(delivery.deliveryDate, period.startDate, period.endDate),
+      )
+      .reduce(
+        (sum, delivery) =>
+          sum + toScaledInteger(delivery.quantityLiters.toString()),
+        0n,
+      );
+    const consumption =
+      toScaledInteger(startReading.quantityLiters.toString()) +
+      delivered -
+      toScaledInteger(endReading.quantityLiters.toString());
     if (consumption < 0n) {
       blockers.push(`Der berechnete Verbrauch für ${tank.name} ist negativ.`);
       continue;
     }
 
-    const lots = tank.inventoryLots.filter((lot) => lot.sourceDate <= period.endDate).map((lot) => {
-      const consumed = lot.consumptions.reduce((sum, row) => sum + toScaledInteger(row.quantityLiters.toString()), 0n);
-      const original = toScaledInteger(lot.quantityLiters.toString());
-      const remaining = original - consumed;
-      const remainingAmount = lot.totalAmountCents - lot.consumptions.reduce((sum, row) => sum + row.amountCents, 0n);
-      const remainingCo2Cost = lot.co2CostCents - lot.consumptions.reduce((sum, row) => sum + row.co2CostCents, 0n);
-      const remainingCo2 = lot.co2Grams - lot.consumptions.reduce((sum, row) => sum + row.co2Grams, 0n);
-      return {
-        id: lot.id,
-        sourceDate: lot.sourceDate,
-        quantityLiters: fromScaledInteger(remaining),
-        totalAmountCents: remainingAmount,
-        co2CostCents: remainingCo2Cost,
-        co2Grams: remainingCo2,
-      };
-    }).filter((lot) => toScaledInteger(lot.quantityLiters) > 0n);
+    const currentLots = tank.inventoryLots.filter(
+      (lot) =>
+        !tank.inventoryLots.some(
+          (other) =>
+            (other.revisionOfId ?? other.id) === (lot.revisionOfId ?? lot.id) &&
+            other.revisionNumber > lot.revisionNumber,
+        ),
+    );
+    for (const lot of currentLots.filter(
+      (lot) => lot.sourceDate <= period.endDate,
+    ))
+      if (!lot.co2EvidenceReference)
+        blockers.push(
+          `CO₂-Beleg für Bestand ${lot.id} fehlt (Null ist kein Ersatz für fehlende Daten).`,
+        );
+    const lots = currentLots
+      .filter((lot) => lot.sourceDate <= period.endDate)
+      .map((lot) => {
+        const consumptions = tank.inventoryLots
+          .filter(
+            (other) =>
+              (other.revisionOfId ?? other.id) === (lot.revisionOfId ?? lot.id),
+          )
+          .flatMap((other) => other.consumptions);
+        const consumed = consumptions.reduce(
+          (sum, row) => sum + toScaledInteger(row.quantityLiters.toString()),
+          0n,
+        );
+        const original = toScaledInteger(lot.quantityLiters.toString());
+        const remaining = original - consumed;
+        const remainingAmount =
+          lot.totalAmountCents -
+          consumptions.reduce((sum, row) => sum + row.amountCents, 0n);
+        const remainingCo2Cost =
+          lot.co2CostCents -
+          consumptions.reduce((sum, row) => sum + row.co2CostCents, 0n);
+        const remainingCo2 =
+          lot.co2Grams -
+          consumptions.reduce((sum, row) => sum + row.co2Grams, 0n);
+        if (
+          remaining < 0n ||
+          remainingAmount < 0n ||
+          remainingCo2Cost < 0n ||
+          remainingCo2 < 0n
+        )
+          blockers.push(
+            "Bestandsrevision unterschreitet bereits verbrauchte Mengen/Kosten. Betroffene frühere Abrechnung zuerst revidieren.",
+          );
+        return {
+          id: lot.id,
+          sourceDate: lot.sourceDate,
+          quantityLiters: fromScaledInteger(remaining),
+          totalAmountCents: remainingAmount,
+          co2CostCents: remainingCo2Cost,
+          co2Grams: remainingCo2,
+        };
+      })
+      .filter((lot) => toScaledInteger(lot.quantityLiters) > 0n);
     try {
-      const fifo = calculateFifoConsumption(lots, fromScaledInteger(consumption));
+      const fifo = calculateFifoConsumption(
+        lots,
+        fromScaledInteger(consumption),
+      );
       totalAmount += fifo.totalAmountCents;
       totalCo2Cost += fifo.totalCo2CostCents;
       totalCo2Grams += fifo.totalCo2Grams;
-      fifoRows.push(...fifo.consumptions.map((row) => ({ tankId: tank.id, tankName: tank.name, ...row })));
+      fifoRows.push(
+        ...fifo.consumptions.map((row) => ({
+          tankId: tank.id,
+          tankName: tank.name,
+          ...row,
+        })),
+      );
     } catch (error) {
-      blockers.push(error instanceof Error ? `${tank.name}: ${error.message}` : `${tank.name}: FIFO-Berechnung fehlgeschlagen.`);
+      blockers.push(
+        error instanceof Error
+          ? `${tank.name}: ${error.message}`
+          : `${tank.name}: FIFO-Berechnung fehlgeschlagen.`,
+      );
     }
-    source.push({ tankId: tank.id, startReading, startGapDays: startGap, endReading, endGapDays: endGap, deliveredLiters: fromScaledInteger(delivered), physicalConsumptionLiters: fromScaledInteger(consumption) });
+    source.push({
+      tankId: tank.id,
+      startReading,
+      startGapDays: startGap,
+      endReading,
+      endGapDays: endGap,
+      deliveredLiters: fromScaledInteger(delivered),
+      physicalConsumptionLiters: fromScaledInteger(consumption),
+    });
   }
 
-  const totalArea = units.reduce((sum, unit) => sum + toScaledInteger(unit.areaM2?.toString() ?? "0"), 0n);
-  const tenantPercent = co2TenantPercent(totalCo2Grams, fromScaledInteger(totalArea), daysInclusive(period.startDate, period.endDate));
+  const operating = await invoicePool(
+    period.propertyId,
+    billingPeriodId,
+    costCategoryId,
+    "HEATING",
+    period.startDate,
+    period.endDate,
+  );
+  const electricity = await plantElectricity(
+    period.propertyId,
+    period.startDate,
+    period.endDate,
+    "HEATING_ELECTRICITY",
+  );
+  if (
+    electricity.details.length &&
+    operating.invoices.some((invoice) =>
+      invoice.lines.some((line) => line.classification === "BETRIEBSSTROM"),
+    )
+  )
+    blockers.push(
+      "Heizungsstrom darf nicht gleichzeitig als Rechnung und Zählerverbrauch berechnet werden.",
+    );
+  blockers.push(...operating.blockers, ...electricity.blockers);
+  totalAmount +=
+    operating.eligible + operating.excluded + electricity.amountCents;
+  const totalArea = units.reduce(
+    (sum, unit) => sum + toScaledInteger(unit.areaM2?.toString() ?? "0"),
+    0n,
+  );
+  const tenantPercent = co2TenantPercent(
+    totalCo2Grams,
+    fromScaledInteger(totalArea),
+    daysInclusive(period.startDate, period.endDate),
+  );
   const landlordCo2 = (totalCo2Cost * BigInt(100 - tenantPercent) + 50n) / 100n;
-  const allocatable = totalAmount - landlordCo2;
-  const unitAmounts = allocateCents(allocatable, units.map((unit) => toScaledInteger(unit.areaM2?.toString() ?? "0")));
+  const allocatable = totalAmount - landlordCo2 - operating.excluded;
+  const unitAmounts = allocateCents(
+    allocatable,
+    units.map((unit) => toScaledInteger(unit.areaM2?.toString() ?? "0")),
+  );
   const allocations: EnergyPreview["allocations"] = [];
   let vacancy = 0n;
   units.forEach((unit, index) => {
-    const split = splitUnitAmountAcrossTenants(unitAmounts[index], unit.id, unit.tenants, period.startDate, period.endDate, {
-      distributionKey: "AREA",
-      calculationBasis: `${unit.areaM2?.toString() ?? "0"} m² von ${fromScaledInteger(totalArea)} m²`,
-      sourceType: "HEATING_OIL",
-      sourceReferenceId: system.id,
-    });
+    const split = splitUnitAmountAcrossTenants(
+      unitAmounts[index],
+      unit.id,
+      unit.tenants,
+      period.startDate,
+      period.endDate,
+      {
+        distributionKey: "AREA",
+        calculationBasis: `${unit.areaM2?.toString() ?? "0"} m² von ${fromScaledInteger(totalArea)} m²`,
+        sourceType: "HEATING_OIL",
+        sourceReferenceId: system.id,
+      },
+    );
     allocations.push(...split.allocations);
     vacancy += split.vacancyCents;
   });
-  const tenantAmount = allocations.reduce((sum, row) => sum + BigInt(row.amountCents), 0n);
-  const sourceFingerprint = fingerprint({ system, source, fifoRows, unitAreas: units.map((unit) => [unit.id, unit.areaM2?.toString()]) });
+  const tenantAmount = allocations.reduce(
+    (sum, row) => sum + BigInt(row.amountCents),
+    0n,
+  );
+  const sourceData = {
+    system,
+    source,
+    fifoRows,
+    operating: operating.invoices,
+    electricity,
+    units,
+  };
+  const sourceFingerprint = fingerprint(sourceData);
   return {
     kind: "HEATING_OIL",
     billingPeriodId,
     costCategoryId,
     totalAmountCents: totalAmount.toString(),
     tenantAmountCents: tenantAmount.toString(),
-    landlordAmountCents: (landlordCo2 + vacancy).toString(),
+    landlordAmountCents: (
+      landlordCo2 +
+      vacancy +
+      operating.excluded
+    ).toString(),
     vacancyAmountCents: vacancy.toString(),
     allocations,
-    details: { fifoRows, co2CostCents: totalCo2Cost.toString(), co2Grams: totalCo2Grams.toString(), co2TenantPercent: tenantPercent, landlordCo2Cents: landlordCo2.toString() },
+    details: {
+      fifoRows,
+      operatingInvoices: serializeExact(operating.details),
+      plantElectricity: serializeExact(electricity.details),
+      totalAreaM2: fromScaledInteger(totalArea),
+      periodDays: daysInclusive(period.startDate, period.endDate),
+      co2CostCents: totalCo2Cost.toString(),
+      co2Grams: totalCo2Grams.toString(),
+      co2TenantPercent: tenantPercent,
+      landlordCo2Cents: landlordCo2.toString(),
+    },
     blockers,
     warnings,
     sourceFingerprint,
+    sourceData: serializeExact(sourceData),
   };
 }
 
 export async function buildElectricityPreview(
   billingPeriodId: string,
-  costCategoryId: string
+  costCategoryId: string,
 ): Promise<EnergyPreview> {
   const period = await prisma.billingPeriod.findUnique({
     where: { id: billingPeriodId },
@@ -230,127 +528,272 @@ export async function buildElectricityPreview(
     },
   });
   if (!period) throw new ApiError("Abrechnungszeitraum nicht gefunden", 404);
-  const blockers: string[] = [];
+  const invoiceSource = await invoicePool(
+    period.propertyId,
+    billingPeriodId,
+    costCategoryId,
+    "ELECTRICITY",
+    period.startDate,
+    period.endDate,
+  );
+  const blockers: string[] = [...invoiceSource.blockers];
   const warnings: string[] = [];
-  const unitEnergy = new Map<string, { amount: bigint; consumption: bigint }>();
-  let commonAmount = 0n;
+  const allocations: EnergyPreview["allocations"] = [];
+  const variable: Array<{
+    numerator: bigint;
+    unitId: string;
+    tenantId: string | null;
+    start: string;
+    end: string;
+    quantity: string;
+    basis: string;
+  }> = [];
+  const intervalDetails: unknown[] = [];
+  let fixedOwner = 0n;
   let totalBase = 0n;
-  const intervalDetails: Array<Record<string, unknown>> = [];
-
+  const units = period.property.units;
   for (const contract of period.property.electricityContracts) {
-    let contractBase = 0n;
-    // Contractual validity and settlement validity are intentionally distinct
-    // when a tariff change could not be measured on its contractual date.
-    const settlementStart = (tariff: typeof contract.tariffs[number]) => tariff.billingValidFrom ?? tariff.validFrom;
-    const settlementEnd = (tariff: typeof contract.tariffs[number]) => tariff.billingValidTo ?? tariff.validTo ?? period.endDate;
-    const activeTariffs = contract.tariffs.filter((tariff) => intersect(settlementStart(tariff), settlementEnd(tariff), period.startDate, period.endDate));
-    if (activeTariffs.length === 0) blockers.push(`Für ${contract.provider} fehlt ein Tarif im Abrechnungszeitraum.`);
-    for (const tariff of activeTariffs) {
-      const range = intersect(settlementStart(tariff), settlementEnd(tariff), period.startDate, period.endDate);
-      if (range) { const amount = prorateMonthlyCents(tariff.monthlyBasePriceCents, range.start, range.end); contractBase += amount; totalBase += amount; }
-    }
-    // Plant meters belong exclusively to the linked operating-cost category;
-    // they must neither trigger generic-electricity blockers nor be charged twice.
-    for (const meter of contract.meters.filter((row) => row.role === "UNIT_CONSUMPTION" || row.role === "COMMON_ELECTRICITY")) {
-      const boundaries = new Map<string, Date>();
-      boundaries.set(isoDay(period.startDate), period.startDate);
-      boundaries.set(isoDay(period.endDate), period.endDate);
-      for (const tariff of activeTariffs) if (settlementStart(tariff) > period.startDate && settlementStart(tariff) < period.endDate) boundaries.set(isoDay(settlementStart(tariff)), settlementStart(tariff));
-      if (meter.unitId) {
-        const unit = period.property.units.find((row) => row.id === meter.unitId);
-        for (const tenant of unit?.tenants ?? []) {
-          if (tenant.moveInDate > period.startDate && tenant.moveInDate < period.endDate) boundaries.set(isoDay(tenant.moveInDate), tenant.moveInDate);
-          if (tenant.moveOutDate && tenant.moveOutDate > period.startDate && tenant.moveOutDate < period.endDate) boundaries.set(isoDay(tenant.moveOutDate), tenant.moveOutDate);
-        }
+    const start = maxDate(
+      period.startDate,
+      contract.validFrom ?? period.startDate,
+    );
+    const end = minDate(period.endDate, contract.validTo ?? period.endDate);
+    if (end < start) continue;
+    const meters = contract.meters.filter(
+      (meter) =>
+        ["UNIT_CONSUMPTION", "COMMON_ELECTRICITY"].includes(meter.role) &&
+        (meter.validFrom ?? start) <= end &&
+        (!meter.validTo || meter.validTo >= start),
+    );
+    if (!meters.length) continue;
+    const consumption = new Map<string, bigint>();
+    for (const meter of meters) {
+      const unit = units.find((unit) => unit.id === meter.unitId);
+      if (meter.role === "UNIT_CONSUMPTION" && !unit) {
+        blockers.push(
+          `Wohnungszuordnung für Zähler ${meter.meterNumber} fehlt.`,
+        );
+        continue;
       }
-      const dates = [...boundaries.values()].sort((a, b) => a.getTime() - b.getTime());
-      const readingMap = new Map(meter.readings.map((reading) => [isoDay(reading.readingDate), reading]));
-      for (const boundary of dates) if (!readingMap.has(isoDay(boundary))) blockers.push(`Ablesung für Zähler ${meter.meterNumber} am ${isoDay(boundary)} fehlt.`);
-      if (dates.some((date) => !readingMap.has(isoDay(date)))) continue;
-      for (let index = 0; index < dates.length - 1; index += 1) {
-        const start = dates[index];
-        const end = dates[index + 1];
-        // A reading on the next effective date closes the preceding interval;
-        // the preceding tariff therefore needs to cover the calendar day
-        // before that boundary, not the boundary itself.
-        const priorCalendarDay = new Date(end); priorCalendarDay.setDate(priorCalendarDay.getDate() - 1);
-        const tariff = activeTariffs.find((row) => settlementStart(row) <= start && settlementEnd(row) >= priorCalendarDay);
-        if (!tariff) {
-          blockers.push(`Tariflücke für Zähler ${meter.meterNumber} ab ${isoDay(start)}.`);
-          continue;
-        }
-        const startReading = readingMap.get(isoDay(start))!;
-        const endReading = readingMap.get(isoDay(end))!;
-        try {
-          const result = calculateElectricityCostCents(startReading.readingKwh.toString(), endReading.readingKwh.toString(), tariff.priceMicroEuroPerKwh);
-          const consumption = toScaledInteger(result.consumptionKwh);
-          if (meter.role === "UNIT_CONSUMPTION" && meter.unitId) {
-            const current = unitEnergy.get(meter.unitId) ?? { amount: 0n, consumption: 0n };
-            current.amount += result.amountCents;
-            current.consumption += consumption;
-            unitEnergy.set(meter.unitId, current);
-          } else if (meter.role === "COMMON_ELECTRICITY") {
-            commonAmount += result.amountCents;
+      const result = meterIntervals(
+        contract,
+        meter,
+        start,
+        end,
+        unit?.tenants ?? [],
+      );
+      blockers.push(...result.blockers);
+      intervalDetails.push(...serializeExact(result.intervals));
+      for (const row of result.intervals) {
+        if (meter.role === "UNIT_CONSUMPTION") {
+          consumption.set(
+            unit!.id,
+            (consumption.get(unit!.id) ?? 0n) +
+              toScaledInteger(row.consumptionKwh),
+          );
+          variable.push({
+            numerator: row.numerator,
+            unitId: unit!.id,
+            tenantId: row.tenantId,
+            start: row.start,
+            end: row.end,
+            quantity: row.consumptionKwh,
+            basis: `${row.consumptionKwh} kWh · Zähler ${row.meterNumber} · ${row.priceMicroEuroPerKwh} µ€/kWh${row.fallbackNotes ? ` · Ersatzablesung: ${row.fallbackNotes}` : ""}`,
+          });
+        } else {
+          if (
+            row.numerator > 0n &&
+            units.every(
+              (unit) => toScaledInteger(unit.areaM2?.toString() ?? "0") === 0n,
+            )
+          ) {
+            blockers.push("Wohnflächen für Allgemeinstrom fehlen.");
+            continue;
           }
-          intervalDetails.push({ meterId: meter.id, meterNumber: meter.meterNumber, start: isoDay(start), end: isoDay(end), consumptionKwh: result.consumptionKwh, priceMicroEuroPerKwh: tariff.priceMicroEuroPerKwh.toString(), contractValidFrom: isoDay(tariff.validFrom), billingValidFrom: isoDay(settlementStart(tariff)), billingEffectiveReason: tariff.billingEffectiveReason, amountCents: result.amountCents.toString() });
-        } catch (error) {
-          blockers.push(error instanceof Error ? `${meter.meterNumber}: ${error.message}` : `${meter.meterNumber}: Berechnung fehlgeschlagen.`);
+          const shares = allocateCents(
+            row.numerator,
+            units.map((unit) =>
+              toScaledInteger(unit.areaM2?.toString() ?? "0"),
+            ),
+          );
+          units.forEach((unit, i) => {
+            const split = splitUnitAmountAcrossTenants(
+              shares[i],
+              unit.id,
+              unit.tenants,
+              new Date(row.start),
+              new Date(row.end),
+              {
+                distributionKey: "AREA",
+                calculationBasis:
+                  "Allgemeinstrom nach Wohnfläche und Belegungstagen",
+                sourceType: "ELECTRICITY",
+              },
+            );
+            for (const allocation of split.allocations)
+              variable.push({
+                numerator: BigInt(allocation.amountCents),
+                unitId: unit.id,
+                tenantId: allocation.tenantId,
+                start: allocation.periodStart,
+                end: allocation.periodEnd,
+                quantity: "0",
+                basis: allocation.calculationBasis,
+              });
+            variable.push({
+              numerator: split.vacancyCents,
+              unitId: unit.id,
+              tenantId: null,
+              start: row.start,
+              end: row.end,
+              quantity: "0",
+              basis: "Eigentümer/Leerstand Allgemeinstrom",
+            });
+          });
         }
       }
     }
-
-    const billableUnits = period.property.units.filter((unit) => contract.meters.some((meter) => meter.unitId === unit.id && meter.role === "UNIT_CONSUMPTION"));
-    const baseWeights = contract.basePriceAllocation === "EQUAL_PER_UNIT"
-      ? billableUnits.map(() => 1n)
-      : billableUnits.map((unit) => unitEnergy.get(unit.id)?.consumption ?? 0n);
-    const baseShares = allocateCents(contractBase, baseWeights);
-    billableUnits.forEach((unit, index) => {
-      const current = unitEnergy.get(unit.id) ?? { amount: 0n, consumption: 0n };
-      current.amount += baseShares[index] ?? 0n;
-      unitEnergy.set(unit.id, current);
+    let contractBase = 0n;
+    const tariffs = contract.tariffs.filter(
+      (tariff) => tariffStart(tariff) <= end && tariffEnd(tariff, end) >= start,
+    );
+    let cursor = start;
+    for (const tariff of [...tariffs].sort(
+      (a, b) => tariffStart(a).getTime() - tariffStart(b).getTime(),
+    )) {
+      const a = maxDate(start, tariffStart(tariff));
+      const b = minDate(end, tariffEnd(tariff, end));
+      if (a.getTime() !== cursor.getTime())
+        blockers.push(
+          `Grundpreis: Tariflücke/Überlappung für ${contract.provider}.`,
+        );
+      contractBase += prorateMonthlyCents(tariff.monthlyBasePriceCents, a, b);
+      cursor = new Date(b.getTime() + 86_400_000);
+    }
+    if (cursor <= end)
+      blockers.push(`Grundpreis: Tarifdeckung für ${contract.provider} fehlt.`);
+    totalBase += contractBase;
+    if (contractBase > 0n && !contract.basePriceAgreementNote?.trim())
+      blockers.push("Vereinbarung zum Strom-Grundpreisschlüssel fehlt.");
+    const billable = units.filter((unit) =>
+      meters.some(
+        (meter) =>
+          meter.unitId === unit.id && meter.role === "UNIT_CONSUMPTION",
+      ),
+    );
+    const weights =
+      contract.basePriceAllocation === "EQUAL_PER_UNIT"
+        ? billable.map(() => 1n)
+        : billable.map((unit) => consumption.get(unit.id) ?? 0n);
+    if (contractBase > 0n && weights.every((weight) => weight === 0n)) {
+      blockers.push(
+        "Grundpreis bei Nullverbrauch: vereinbarten Ersatzschlüssel dokumentieren.",
+      );
+      fixedOwner += contractBase;
+      continue;
+    }
+    const shares = allocateCents(contractBase, weights);
+    billable.forEach((unit, i) => {
+      const split = splitUnitAmountAcrossTenants(
+        shares[i],
+        unit.id,
+        unit.tenants,
+        start,
+        end,
+        {
+          distributionKey: contract.basePriceAllocation,
+          calculationBasis: `Grundpreis · ${contract.basePriceAllocation} · Belegungstage`,
+          sourceType: "ELECTRICITY",
+        },
+      );
+      allocations.push(
+        ...split.allocations.filter((row) => BigInt(row.amountCents) !== 0n),
+      );
+      fixedOwner += split.vacancyCents;
     });
   }
-
-  const allUnits = period.property.units;
-  const commonShares = allocateCents(commonAmount, allUnits.map((unit) => toScaledInteger(unit.areaM2?.toString() ?? "0")));
-  const allocations: EnergyPreview["allocations"] = [];
-  let vacancy = 0n;
-  allUnits.forEach((unit, index) => {
-    const own = unitEnergy.get(unit.id) ?? { amount: 0n, consumption: 0n };
-    const amount = own.amount + (commonShares[index] ?? 0n);
-    if (amount === 0n) return;
-    const split = splitUnitAmountAcrossTenants(amount, unit.id, unit.tenants, period.startDate, period.endDate, {
-      quantity: fromScaledInteger(own.consumption),
-      distributionKey: own.amount > 0n ? "DIRECT_CONSUMPTION" : "AREA",
-      calculationBasis: `${fromScaledInteger(own.consumption)} kWh plus Allgemeinstrom/Grundpreis`,
+  // Accumulate micro-euro products across every interval before final cents.
+  const numerator = variable.reduce((sum, row) => sum + row.numerator, 0n);
+  const totalVariable = roundFraction(numerator, ELECTRICITY_DENOMINATOR);
+  const shares = allocateCents(
+    totalVariable,
+    variable.map((row) => row.numerator),
+  );
+  let owner = fixedOwner;
+  variable.forEach((row, i) => {
+    if (!row.tenantId) {
+      owner += shares[i];
+      return;
+    }
+    if (shares[i] === 0n) return;
+    allocations.push({
+      unitId: row.unitId,
+      tenantId: row.tenantId,
+      periodStart: row.start,
+      periodEnd: row.end,
+      amountCents: shares[i].toString(),
+      quantity: row.quantity,
+      distributionKey: "DIRECT_CONSUMPTION",
+      calculationBasis: row.basis,
       sourceType: "ELECTRICITY",
     });
-    allocations.push(...split.allocations);
-    vacancy += split.vacancyCents;
   });
-  const tenantAmount = allocations.reduce((sum, row) => sum + BigInt(row.amountCents), 0n);
-  const total = tenantAmount + vacancy;
-  const sourceFingerprint = fingerprint({ contracts: period.property.electricityContracts, intervalDetails });
+  const tenantAmount = allocations.reduce(
+    (sum, row) => sum + BigInt(row.amountCents),
+    0n,
+  );
+  const sourceData = {
+    invoices: invoiceSource.invoices,
+    contracts: period.property.electricityContracts,
+    units,
+    intervalDetails,
+    period: [isoDay(period.startDate), isoDay(period.endDate)],
+  };
   return {
     kind: "ELECTRICITY",
     billingPeriodId,
     costCategoryId,
-    totalAmountCents: total.toString(),
+    totalAmountCents: (totalVariable + totalBase).toString(),
     tenantAmountCents: tenantAmount.toString(),
-    landlordAmountCents: vacancy.toString(),
-    vacancyAmountCents: vacancy.toString(),
+    landlordAmountCents: owner.toString(),
+    vacancyAmountCents: owner.toString(),
     allocations,
-    details: { intervalDetails, basePriceCents: totalBase.toString(), commonElectricityCents: commonAmount.toString() },
+    details: { intervalDetails, basePriceCents: totalBase.toString() },
     blockers,
     warnings,
-    sourceFingerprint,
+    sourceFingerprint: fingerprint(sourceData),
+    sourceData: serializeExact(sourceData),
   };
 }
 
-export async function buildEnergyPreview(kind: string, billingPeriodId: string, costCategoryId: string) {
-  if (kind === "HEATING_OIL") return buildHeatingOilPreview(billingPeriodId, costCategoryId);
-  if (kind === "ELECTRICITY") return buildElectricityPreview(billingPeriodId, costCategoryId);
-  if (kind === "SMALL_WASTEWATER") return buildSmallWastewaterPreview(billingPeriodId, costCategoryId);
-  if (kind === "MANUAL") return buildManualCostPreview(billingPeriodId, costCategoryId);
-  throw new ApiError("Unbekannte Energie-Kostenart", 400);
+export async function buildEnergyPreview(
+  kind: string,
+  billingPeriodId: string,
+  costCategoryId: string,
+) {
+  const category = await prisma.costCategory.findUnique({
+    where: { id: costCategoryId },
+  });
+  if (!category) throw new ApiError("Kostenart nicht gefunden", 404);
+  const expected =
+    category.calculationType === "HEATING_OIL"
+      ? "HEATING_OIL"
+      : category.calculationType === "ELECTRICITY"
+        ? "ELECTRICITY"
+        : category.code === "WASTEWATER" ||
+            category.name.includes("Kleinkläranlage")
+          ? "SMALL_WASTEWATER"
+          : "MANUAL";
+  if (kind !== expected)
+    throw new ApiError("Berechnungsart passt nicht zur Kostenart", 400);
+  const preview =
+    kind === "HEATING_OIL"
+      ? await buildHeatingOilPreview(billingPeriodId, costCategoryId)
+      : kind === "ELECTRICITY"
+        ? await buildElectricityPreview(billingPeriodId, costCategoryId)
+        : kind === "SMALL_WASTEWATER"
+          ? await buildSmallWastewaterPreview(billingPeriodId, costCategoryId)
+          : await buildManualCostPreview(billingPeriodId, costCategoryId);
+  const sourceData = { inputs: preview.sourceData, policy: ALLOCATION_POLICY };
+  return { ...preview, sourceData, sourceFingerprint: fingerprint(sourceData) };
 }

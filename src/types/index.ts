@@ -78,6 +78,11 @@ export interface BillingPeriod {
 }
 
 export interface BillingPeriodWithProperty extends BillingPeriod {
+  summary?: {
+    totalCostsCents: string;
+    totalPrepaymentCents: string;
+    differenceCents: string;
+  } | null;
   property: Property;
   _count?: { costs: number };
   costs?: CostWithCategory[];

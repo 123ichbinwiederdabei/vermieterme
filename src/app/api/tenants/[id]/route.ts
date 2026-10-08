@@ -1,9 +1,10 @@
+import { invalidateProperty } from "@/lib/billing-freshness";
 import { prisma } from "@/lib/prisma";
 import { apiHandler, requireAuth, jsonOk } from "@/lib/api-utils";
 
 export function PUT(
   request: Request,
-  { params: paramsPromise }: { params: Promise<{ id: string }> }
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
   return apiHandler(async () => {
     await requireAuth();
@@ -64,21 +65,28 @@ export function PUT(
       },
     });
 
+    const unit = await prisma.unit.findUnique({ where: { id: tenant.unitId } });
+    if (unit) await invalidateProperty(unit.propertyId);
     return jsonOk(tenant);
   });
 }
 
 export function DELETE(
   _request: Request,
-  { params: paramsPromise }: { params: Promise<{ id: string }> }
+  { params: paramsPromise }: { params: Promise<{ id: string }> },
 ) {
   return apiHandler(async () => {
     await requireAuth();
     const { id } = await paramsPromise;
+    const previous = await prisma.tenant.findUnique({
+      where: { id },
+      include: { unit: true },
+    });
     await prisma.tenant.delete({
       where: { id },
     });
 
+    if (previous) await invalidateProperty(previous.unit.propertyId);
     return jsonOk({ success: true });
   });
 }

@@ -6,6 +6,7 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    unit: { findUnique: vi.fn().mockResolvedValue(null) },
     tenant: {
       findMany: vi.fn(),
       create: vi.fn(),
@@ -59,7 +60,7 @@ describe("GET /api/tenants", () => {
     expect(prisma.tenant.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { unitId: "u1" },
-      })
+      }),
     );
   });
 
@@ -72,7 +73,7 @@ describe("GET /api/tenants", () => {
     expect(prisma.tenant.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: undefined,
-      })
+      }),
     );
   });
 });

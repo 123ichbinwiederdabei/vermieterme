@@ -16,7 +16,13 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV AUTH_SECRET="build-placeholder"
-RUN pnpm build
+RUN pnpm build && pnpm build:worker
+
+# Complete production dependencies also support the separate OCR worker.
+FROM base AS runtime-deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml .npmrc ./
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # --- Production ---
 FROM base AS runner
@@ -33,6 +39,10 @@ COPY --from=builder /app/public ./public
 # Copy standalone build
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Keep native Google SDK data files and PDF worker available at runtime.
+COPY --from=runtime-deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
 
 # Copy Prisma schema + runtime client
 COPY --from=builder /app/prisma ./prisma

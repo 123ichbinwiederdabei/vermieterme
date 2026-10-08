@@ -27,8 +27,12 @@ export function daysInclusive(start: Date, end: Date): number {
   return (
     Math.floor(
       (Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()) -
-        Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())) /
-        86_400_000
+        Date.UTC(
+          start.getUTCFullYear(),
+          start.getUTCMonth(),
+          start.getUTCDate(),
+        )) /
+        86_400_000,
     ) + 1
   );
 }
@@ -36,23 +40,19 @@ export function daysInclusive(start: Date, end: Date): number {
 export function co2TenantPercent(
   co2Grams: bigint,
   areaM2: string,
-  periodDays: number
+  periodDays: number,
 ): number {
   const areaMilli = toScaledInteger(areaM2);
   if (areaMilli <= 0n || periodDays <= 0) return 100;
-  const tenthsKgPerM2Year =
-    (co2Grams * 3650n * 1000n) /
-    (areaMilli * BigInt(periodDays) * 1000n);
-  const value = Number(tenthsKgPerM2Year) / 10;
-  if (value < 12) return 100;
-  if (value < 17) return 90;
-  if (value < 22) return 80;
-  if (value < 27) return 70;
-  if (value < 32) return 60;
-  if (value < 37) return 50;
-  if (value < 42) return 40;
-  if (value < 47) return 30;
-  if (value < 52) return 20;
+  // §5: first round the actual period intensity to 0.1 kg/m², then
+  // shorten the table thresholds for a period under one year.
+  const tenths = (co2Grams * 10n + areaMilli / 2n) / areaMilli;
+  const tableDays = BigInt(Math.min(periodDays, 365));
+  const thresholds = [120n, 170n, 220n, 270n, 320n, 370n, 420n, 470n, 520n];
+  const tier = thresholds.findIndex(
+    (value) => tenths * 365n < value * tableDays,
+  );
+  if (tier >= 0) return 100 - tier * 10;
   return 5;
 }
 
@@ -65,16 +65,33 @@ export function splitUnitAmountAcrossTenants(
   source: Omit<
     AllocationResult,
     "unitId" | "tenantId" | "periodStart" | "periodEnd" | "amountCents"
-  >
+  >,
 ): { allocations: AllocationResult[]; vacancyCents: bigint } {
   const overlaps = tenants
     .map((tenant) => {
-      const start = tenant.moveInDate > periodStart ? tenant.moveInDate : periodStart;
+      const start =
+        tenant.moveInDate > periodStart ? tenant.moveInDate : periodStart;
       const endCandidate = tenant.moveOutDate ?? periodEnd;
       const end = endCandidate < periodEnd ? endCandidate : periodEnd;
-      return { tenant, start, end, days: end >= start ? daysInclusive(start, end) : 0 };
+      return {
+        tenant,
+        start,
+        end,
+        days: end >= start ? daysInclusive(start, end) : 0,
+      };
     })
     .filter((row) => row.days > 0);
+  if (
+    overlaps.some((row, i) =>
+      overlaps.some(
+        (other, j) =>
+          i !== j && row.start <= other.end && row.end >= other.start,
+      ),
+    )
+  )
+    throw new Error(
+      "Überlappende Mietverhältnisse müssen vor der Abrechnung korrigiert werden.",
+    );
   const totalDays = daysInclusive(periodStart, periodEnd);
   const occupiedDays = overlaps.reduce((sum, row) => sum + row.days, 0);
   const weights = [

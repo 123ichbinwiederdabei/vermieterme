@@ -9,19 +9,23 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { api } from "../../lib/api";
-import { formatCurrency, formatDateRange } from "../../lib/format";
+import { formatCents, formatDateRange } from "../../lib/format";
 import type { BillingPeriodSummary } from "../../lib/types";
 
 function getStatusBadge(bp: BillingPeriodSummary) {
   if (bp.paidDate) return { label: "Bezahlt", bg: "#dcfce7", color: "#16a34a" };
-  if (bp.sentDate) return { label: "Versendet", bg: "#dbeafe", color: "#2563eb" };
-  if (bp.billingDate) return { label: "Abgeschlossen", bg: "#d1fae5", color: "#059669" };
+  if (bp.sentDate)
+    return { label: "Versendet", bg: "#dbeafe", color: "#2563eb" };
+  if (bp.billingDate)
+    return { label: "Abgeschlossen", bg: "#d1fae5", color: "#059669" };
   return { label: "Offen", bg: "#f4f4f5", color: "#71717a" };
 }
 
 export default function BillingScreen() {
   const router = useRouter();
-  const [billingPeriods, setBillingPeriods] = useState<BillingPeriodSummary[]>([]);
+  const [billingPeriods, setBillingPeriods] = useState<BillingPeriodSummary[]>(
+    [],
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -61,7 +65,11 @@ export default function BillingScreen() {
       data={billingPeriods}
       keyExtractor={(item) => item.id}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#b91c1c" />
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor="#b91c1c"
+        />
       }
       ListEmptyComponent={
         <View style={styles.emptyContainer}>
@@ -72,7 +80,7 @@ export default function BillingScreen() {
       }
       renderItem={({ item }) => {
         const status = getStatusBadge(item);
-        const isPositive = item.difference >= 0;
+        const isPositive = BigInt(item.differenceCents) >= 0n;
 
         return (
           <TouchableOpacity
@@ -95,13 +103,13 @@ export default function BillingScreen() {
               <View style={styles.costRow}>
                 <Text style={styles.costLabel}>Ihr Anteil</Text>
                 <Text style={styles.costValue}>
-                  {formatCurrency(item.totalUnitCosts)} EUR
+                  {formatCents(item.totalUnitCostsCents)} EUR
                 </Text>
               </View>
               <View style={styles.costRow}>
                 <Text style={styles.costLabel}>Vorauszahlung</Text>
                 <Text style={styles.costValue}>
-                  {formatCurrency(item.totalPrepayment)} EUR
+                  {formatCents(item.totalPrepaymentCents)} EUR
                 </Text>
               </View>
               <View style={[styles.costRow, styles.resultRow]}>
@@ -114,7 +122,7 @@ export default function BillingScreen() {
                     { color: isPositive ? "#16a34a" : "#dc2626" },
                   ]}
                 >
-                  {formatCurrency(Math.abs(item.difference))} EUR
+                  {formatCents(item.differenceCents, true)} EUR
                 </Text>
               </View>
             </View>

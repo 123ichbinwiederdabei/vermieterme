@@ -2,14 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { serializeExact } from "@/lib/billing-v2";
 
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number
-  ) {
-    super(message);
-  }
-}
+import { ApiError } from "@/lib/api-error";
+export { ApiError } from "@/lib/api-error";
 
 export async function requireAuth() {
   const session = await auth();
@@ -20,19 +14,19 @@ export async function requireAuth() {
 }
 
 export function apiHandler(
-  fn: () => Promise<NextResponse | Response>
+  fn: () => Promise<NextResponse | Response>,
 ): Promise<NextResponse | Response> {
   return fn().catch((error) => {
     if (error instanceof ApiError) {
       return NextResponse.json(
         { error: error.message },
-        { status: error.status }
+        { status: error.status },
       );
     }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   });
 }

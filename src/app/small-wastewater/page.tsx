@@ -1,34 +1,170 @@
 "use client";
-
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Nav } from "@/components/nav";
-import { centsToEuro, euroToCents } from "@/lib/money";
+import {
+  CategoryInvoices,
+  invoiceInputClass,
+} from "@/components/category-invoices";
+import { categoryCode } from "@/lib/invoice-categories";
 
-type Period = { id: string; status: "OPEN" | "SUPERSEDED"; startDate: string; endDate: string; property: { street: string; city: string } };
-type Category = { id: string; name: string };
-type Line = { description: string; amountEuro: string; classification: string; confirmedRunningExpense: boolean };
-type Invoice = { id: string; supplier?: string | null; invoiceNumber?: string | null; servicePeriodStart?: string | null; servicePeriodEnd?: string | null; totalAmountCents: string; lines: Array<{ description: string; classification: string; amountCents: string }> };
-const input = "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500";
-const classes = [["WARTUNG", "Wartung"], ["PRÜFUNG", "Prüfung"], ["BETRIEBSSTROM", "Betriebsstrom (Rechnung)"], ["SCHLAMMABFUHR", "Schlammabfuhr / Abpumpen"], ["REPARATUR", "Reparatur (nicht umlagefähig)"], ["ERSATZ", "Ersatz (nicht umlagefähig)"], ["SANIERUNG", "Sanierung (nicht umlagefähig)"], ["MODERNISIERUNG", "Modernisierung (nicht umlagefähig)"], ["SONSTIGES", "Sonstiges"]];
-
+type Period = {
+  id: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  property: { street: string };
+};
+type Category = { id: string; name: string; code: string };
 export default function SmallWastewaterPage() {
-  const [periods, setPeriods] = useState<Period[]>([]); const [category, setCategory] = useState<Category | null>(null); const [periodId, setPeriodId] = useState(""); const [invoices, setInvoices] = useState<Invoice[]>([]); const [message, setMessage] = useState("");
-  const [form, setForm] = useState({ supplier: "", invoiceNumber: "", invoiceDate: "", serviceStart: "", serviceEnd: "", note: "" });
-  const [lines, setLines] = useState<Line[]>([{ description: "", amountEuro: "", classification: "WARTUNG", confirmedRunningExpense: false }]);
-  const selected = useMemo(() => periods.find((row) => row.id === periodId), [periods, periodId]);
+  const [periods, setPeriods] = useState<Period[]>([]);
+  const [periodId, setPeriodId] = useState("");
+  const [category, setCategory] = useState<Category | null>(null);
+  const [message, setMessage] = useState("");
+  const [tenants, setTenants] = useState<
+    Array<{ id: string; firstName: string; lastName: string }>
+  >([]);
+  const [agreement, setAgreement] = useState({
+    tenantId: "",
+    validFrom: "",
+    validTo: "",
+    note: "",
+    contractDocumentId: "",
+  });
+  const [locked, setLocked] = useState(false);
   useEffect(() => {
-    void (async () => {
-      const [periodResponse, categoryResponse] = await Promise.all([fetch("/api/billing-periods"), fetch("/api/cost-categories")]);
-      const allPeriods: Period[] = periodResponse.ok ? await periodResponse.json() : [];
-      const loadedPeriods = allPeriods.filter((row) => row.status !== "SUPERSEDED");
-      const categories: Category[] = categoryResponse.ok ? await categoryResponse.json() : [];
-      setPeriods(loadedPeriods);
-      setCategory(categories.find((row) => row.name === "Entwässerung – Kleinkläranlage") || null);
-      setPeriodId((current) => current || loadedPeriods[0]?.id || "");
-    })();
+    void Promise.all([
+      fetch("/api/billing-periods").then((r) => r.json()),
+      fetch("/api/cost-categories").then((r) => r.json()),
+    ]).then(([periods, categories]) => {
+      const active = periods.filter((p: Period) => p.status !== "SUPERSEDED");
+      setPeriods(active);
+      setPeriodId(active[0]?.id || "");
+      setCategory(
+        categories.find((c: Category) => categoryCode(c) === "WASTEWATER") ??
+          null,
+      );
+    });
   }, []);
-  useEffect(() => { if (!periodId || !category) return; void fetch(`/api/cost-invoices?billingPeriodId=${periodId}&costCategoryId=${category.id}`).then(async (response) => response.ok ? setInvoices(await response.json()) : setInvoices([])); }, [periodId, category]);
-  async function save(event: React.FormEvent) { event.preventDefault(); if (!category || !periodId) return; try { const totalAmountCents = lines.reduce((sum, line) => sum + BigInt(euroToCents(line.amountEuro || "0")), 0n).toString(); const response = await fetch("/api/cost-invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ billingPeriodId: periodId, costCategoryId: category.id, supplier: form.supplier, invoiceNumber: form.invoiceNumber, invoiceDate: form.invoiceDate || null, servicePeriodStart: form.serviceStart || null, servicePeriodEnd: form.serviceEnd || null, note: form.note, totalAmountCents, lines: lines.map((line) => ({ ...line, amountCents: euroToCents(line.amountEuro || "0") })) }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Speichern fehlgeschlagen"); setMessage("Rechnung gespeichert"); setForm({ supplier: "", invoiceNumber: "", invoiceDate: "", serviceStart: "", serviceEnd: "", note: "" }); setLines([{ description: "", amountEuro: "", classification: "WARTUNG", confirmedRunningExpense: false }]); const result = await fetch(`/api/cost-invoices?billingPeriodId=${periodId}&costCategoryId=${category.id}`); if (result.ok) setInvoices(await result.json()); } catch (error) { setMessage(error instanceof Error ? error.message : "Speichern fehlgeschlagen"); } }
-  return <><Nav /><main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"><div className="mb-8"><h1 className="text-2xl font-bold text-zinc-900">Kleinkläranlage</h1><p className="mt-1 text-sm text-zinc-500">Wartung, Prüfung, Schlammabfuhr und beleggestützte Betriebskosten</p></div>{message && <p className="mb-4 text-sm text-green-700">{message}</p>}<section className="mb-6 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm"><label className="block text-sm font-medium text-zinc-700">Abrechnungszeitraum<select className={`${input} mt-1`} value={periodId} onChange={(event) => setPeriodId(event.target.value)}><option value="">Bitte wählen</option>{periods.map((row) => <option key={row.id} value={row.id}>{row.property.street}: {new Date(row.startDate).toLocaleDateString("de-DE")} – {new Date(row.endDate).toLocaleDateString("de-DE")}</option>)}</select></label>{selected && <p className="mt-3 text-sm text-zinc-500">Die Kosten werden taggenau nur für diesen Zeitraum angesetzt. Der Anlagenstrom wird unter <a className="text-red-700 underline" href="/electricity">Strom</a> als Zählerrolle „Kleinkläranlage – Anlagenstrom“ angelegt.</p>}</section><form className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm" onSubmit={save}><h2 className="mb-4 text-lg font-semibold text-zinc-900">Rechnung erfassen</h2><div className="grid gap-4 sm:grid-cols-2"><Field label="Lieferant" value={form.supplier} set={(value) => setForm({ ...form, supplier: value })}/><Field label="Rechnungsnummer" value={form.invoiceNumber} set={(value) => setForm({ ...form, invoiceNumber: value })} required={false}/><Field label="Rechnungsdatum" type="date" value={form.invoiceDate} set={(value) => setForm({ ...form, invoiceDate: value })} required={false}/><Field label="Leistungsbeginn" type="date" value={form.serviceStart} set={(value) => setForm({ ...form, serviceStart: value })} required={false}/><Field label="Leistungsende" type="date" value={form.serviceEnd} set={(value) => setForm({ ...form, serviceEnd: value })} required={false}/><Field label="Notiz" value={form.note} set={(value) => setForm({ ...form, note: value })} required={false}/></div><h3 className="mb-2 mt-6 text-sm font-semibold text-zinc-900">Rechnungszeilen</h3>{lines.map((line, index) => <div className="mb-3 grid gap-2 rounded-lg bg-zinc-50 p-3 sm:grid-cols-4" key={index}><input className={input} required placeholder="Beschreibung" value={line.description} onChange={(event) => setLines(lines.map((row, i) => i === index ? { ...row, description: event.target.value } : row))}/><input className={input} required type="number" min="0" step="0.01" placeholder="Betrag €" value={line.amountEuro} onChange={(event) => setLines(lines.map((row, i) => i === index ? { ...row, amountEuro: event.target.value } : row))}/><select className={input} value={line.classification} onChange={(event) => setLines(lines.map((row, i) => i === index ? { ...row, classification: event.target.value } : row))}>{classes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><button type="button" className="text-sm text-red-700" onClick={() => setLines(lines.filter((_, i) => i !== index))} disabled={lines.length === 1}>Zeile entfernen</button></div>)}<button type="button" className="mt-1 text-sm text-red-700" onClick={() => setLines([...lines, { description: "", amountEuro: "", classification: "WARTUNG", confirmedRunningExpense: false }])}>+ Rechnungszeile</button><button className="mt-6 block rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800">Rechnung speichern</button></form><section className="mt-8 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm"><h2 className="mb-4 text-lg font-semibold text-zinc-900">Erfasste Rechnungen</h2>{invoices.length === 0 ? <p className="text-sm text-zinc-500">Noch keine Rechnungen für diesen Zeitraum.</p> : invoices.map((invoice) => <div className="border-b border-zinc-100 py-3 last:border-0" key={invoice.id}><p className="font-medium text-zinc-900">{invoice.supplier || "Ohne Lieferant"}{invoice.invoiceNumber ? ` · ${invoice.invoiceNumber}` : ""} · {centsToEuro(invoice.totalAmountCents)}</p><p className="text-sm text-zinc-500">Leistung: {invoice.servicePeriodStart ? new Date(invoice.servicePeriodStart).toLocaleDateString("de-DE") : "nicht angegeben"} – {invoice.servicePeriodEnd ? new Date(invoice.servicePeriodEnd).toLocaleDateString("de-DE") : "nicht angegeben"}</p></div>)}</section></main></>;
+  useEffect(() => {
+    if (!periodId) return;
+    void fetch(`/api/billing-periods/${periodId}/workspace`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) {
+          setMessage(data.error);
+          return;
+        }
+        setLocked(data.locked);
+        setTenants(
+          data.period.property.units.flatMap(
+            (unit: { tenants: typeof tenants }) => unit.tenants,
+          ),
+        );
+      });
+  }, [periodId]);
+  async function saveAgreement(event: React.FormEvent) {
+    event.preventDefault();
+    const response = await fetch("/api/lease-cost-category-agreements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...agreement, costCategoryId: category?.id }),
+    });
+    const data = await response.json();
+    setMessage(response.ok ? "Vertragsbestätigung gespeichert" : data.error);
+  }
+  return (
+    <>
+      <Nav />
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-8">
+        <h1 className="text-2xl font-semibold">Kleinkläranlage</h1>
+        <p className="text-sm text-zinc-600">
+          Laufende Kosten und Anlagenstrom · ein Drittel je Wohnung
+          einschließlich Vermieter · keine Reparaturen
+        </p>
+        <label className="block text-sm">
+          Abrechnungszeitraum
+          <select
+            className={invoiceInputClass}
+            value={periodId}
+            onChange={(e) => setPeriodId(e.target.value)}
+          >
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.property.street} · {p.startDate.slice(0, 10)} –{" "}
+                {p.endDate.slice(0, 10)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {category && periodId && (
+          <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold">Rechnung erfassen</h2>
+            <CategoryInvoices
+              key={periodId}
+              periodId={periodId}
+              category={{ id: category.id, code: "WASTEWATER" }}
+              tanks={[]}
+              locked={locked}
+              onChanged={() => undefined}
+            />
+            <a
+              className="mt-4 inline-block text-sm text-red-700 underline"
+              href={`/billing/${periodId}`}
+            >
+              Zur Berechnung und Abrechnung
+            </a>
+          </section>
+        )}
+        <form
+          onSubmit={saveAgreement}
+          className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm"
+        >
+          <h2 className="mb-3 text-lg font-semibold">Vertragsbestätigung</h2>
+          <label className="block text-sm">
+            Mietverhältnis
+            <select
+              className={invoiceInputClass}
+              required
+              value={agreement.tenantId}
+              onChange={(e) =>
+                setAgreement({ ...agreement, tenantId: e.target.value })
+              }
+            >
+              <option value="">Bitte wählen</option>
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.firstName} {t.lastName}
+                </option>
+              ))}
+            </select>
+          </label>
+          {["validFrom", "validTo", "note", "contractDocumentId"].map((key) => (
+            <label key={key} className="mt-3 block text-sm">
+              {
+                {
+                  validFrom: "Gültig ab",
+                  validTo: "Gültig bis",
+                  note: "Dokumentierte Prüfung des Vertrags",
+                  contractDocumentId: "Vertragsbeleg-ID",
+                }[key]
+              }
+              <input
+                className={invoiceInputClass}
+                type={key.startsWith("valid") ? "date" : "text"}
+                required={key === "validFrom" || key === "note"}
+                value={agreement[key as keyof typeof agreement]}
+                onChange={(e) =>
+                  setAgreement({ ...agreement, [key]: e.target.value })
+                }
+              />
+            </label>
+          ))}
+          <button className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm text-white">
+            Bestätigung speichern
+          </button>
+        </form>
+        {message && <p role="status">{message}</p>}
+      </main>
+    </>
+  );
 }
-function Field({ label, value, set, type = "text", required = true }: { label: string; value: string; set: (value: string) => void; type?: string; required?: boolean }) { return <label className="flex flex-col gap-1 text-sm font-medium text-zinc-700"><span>{label}</span><input className={input} type={type} required={required} value={value} onChange={(event) => set(event.target.value)} /></label>; }

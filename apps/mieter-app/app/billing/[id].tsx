@@ -10,7 +10,12 @@ import {
 import { useLocalSearchParams, Stack } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { api } from "../../lib/api";
-import { formatCurrency, formatDateRange, formatDate, formatFileSize } from "../../lib/format";
+import {
+  formatCents,
+  formatDateRange,
+  formatDate,
+  formatFileSize,
+} from "../../lib/format";
 import type { BillingPeriodDetail } from "../../lib/types";
 
 export default function BillingDetailScreen() {
@@ -23,7 +28,9 @@ export default function BillingDetailScreen() {
     api
       .getBillingPeriod(id)
       .then(setDetail)
-      .catch(() => Alert.alert("Fehler", "Abrechnung konnte nicht geladen werden."))
+      .catch(() =>
+        Alert.alert("Fehler", "Abrechnung konnte nicht geladen werden."),
+      )
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -54,7 +61,7 @@ export default function BillingDetailScreen() {
     );
   }
 
-  const isPositive = detail.totals.difference >= 0;
+  const isPositive = BigInt(detail.totals.differenceCents) >= 0n;
 
   return (
     <>
@@ -76,7 +83,7 @@ export default function BillingDetailScreen() {
               { color: isPositive ? "#16a34a" : "#dc2626" },
             ]}
           >
-            {formatCurrency(Math.abs(detail.totals.difference))} EUR
+            {formatCents(detail.totals.differenceCents, true)} EUR
           </Text>
         </View>
 
@@ -85,10 +92,14 @@ export default function BillingDetailScreen() {
           <Text style={styles.sectionTitle}>Kostenaufstellung</Text>
           <View style={styles.tableHeader}>
             <Text style={[styles.tableHeaderText, { flex: 2 }]}>Kostenart</Text>
-            <Text style={[styles.tableHeaderText, { flex: 1, textAlign: "right" }]}>
+            <Text
+              style={[styles.tableHeaderText, { flex: 1, textAlign: "right" }]}
+            >
               Gesamt
             </Text>
-            <Text style={[styles.tableHeaderText, { flex: 1, textAlign: "right" }]}>
+            <Text
+              style={[styles.tableHeaderText, { flex: 1, textAlign: "right" }]}
+            >
               Ihr Anteil
             </Text>
           </View>
@@ -98,21 +109,25 @@ export default function BillingDetailScreen() {
                 <Text style={styles.costName}>{cost.category}</Text>
                 <Text style={styles.costKey}>{cost.distributionKey}</Text>
               </View>
-              <Text style={[styles.costAmount, { flex: 1, textAlign: "right" }]}>
-                {formatCurrency(cost.totalAmount)}
+              <Text
+                style={[styles.costAmount, { flex: 1, textAlign: "right" }]}
+              >
+                {formatCents(cost.totalAmountCents)}
               </Text>
-              <Text style={[styles.costAmount, { flex: 1, textAlign: "right" }]}>
-                {formatCurrency(cost.unitAmount)}
+              <Text
+                style={[styles.costAmount, { flex: 1, textAlign: "right" }]}
+              >
+                {formatCents(cost.amountCents)}
               </Text>
             </View>
           ))}
           <View style={styles.tableSumRow}>
             <Text style={[styles.sumText, { flex: 2 }]}>Gesamt</Text>
             <Text style={[styles.sumText, { flex: 1, textAlign: "right" }]}>
-              {formatCurrency(detail.totals.totalCosts)}
+              {formatCents(detail.totals.totalCostsCents)}
             </Text>
             <Text style={[styles.sumText, { flex: 1, textAlign: "right" }]}>
-              {formatCurrency(detail.totals.totalUnitCosts)}
+              {formatCents(detail.totals.totalUnitCostsCents)}
             </Text>
           </View>
         </View>
@@ -122,13 +137,13 @@ export default function BillingDetailScreen() {
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Ihre Vorauszahlungen</Text>
             <Text style={styles.summaryValue}>
-              {formatCurrency(detail.totals.totalPrepayment)} EUR
+              {formatCents(detail.totals.totalPrepaymentCents)} EUR
             </Text>
           </View>
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Ihr Kostenanteil</Text>
             <Text style={styles.summaryValue}>
-              {formatCurrency(detail.totals.totalUnitCosts)} EUR
+              {formatCents(detail.totals.totalUnitCostsCents)} EUR
             </Text>
           </View>
           <View style={[styles.summaryRow, styles.summaryResultRow]}>
@@ -141,7 +156,7 @@ export default function BillingDetailScreen() {
                 { color: isPositive ? "#16a34a" : "#dc2626" },
               ]}
             >
-              {formatCurrency(Math.abs(detail.totals.difference))} EUR
+              {formatCents(detail.totals.differenceCents, true)} EUR
             </Text>
           </View>
         </View>

@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/.pnpm-store/
 /.pnp
 .pnp.*
 .yarn/*
@@ -67,3 +68,9 @@ apps/mieter-app/.expo/
 apps/mieter-app/dist/
 apps/mieter-app/android/
 apps/mieter-app/ios/
+
+# Bundled OCR worker
+/dist/
+
+# Uploaded invoice evidence
+/data/uploads/

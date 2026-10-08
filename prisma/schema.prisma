@@ -144,6 +144,8 @@ model CostCategory {
   name                 String
   distributionKey      String
   calculationType      String                       @default("MANUAL")
+  code                 String                       @default("OTHER")
+  invoiceTemplates     InvoiceTemplate[]
   sortOrder            Int                          @default(0)
   costs                Cost[]
   prepaymentComponents PrepaymentComponent[]
@@ -163,6 +165,9 @@ model BillingPeriod {
   billingDate      DateTime?
   sentDate         DateTime?
   paidDate         DateTime?
+  sourceRevision   Int               @default(0)
+  revisionOfPeriodId String?
+  revisionReason   String?
   copiedFromId     String?
   copiedFrom       BillingPeriod?    @relation("BillingCopy", fields: [copiedFromId], references: [id], onDelete: SetNull)
   copies           BillingPeriod[]   @relation("BillingCopy")
@@ -170,6 +175,8 @@ model BillingPeriod {
   costs            Cost[]
   prepayments      Prepayment[]
   documents        Document[]
+  calculationHeads CategoryCalculationHead[]
+  statementRevisions StatementRevision[]
   billingSnapshots BillingSnapshot[]
   costAllocations  CostAllocation[]
   costInvoices     CostInvoice[]
@@ -253,6 +260,9 @@ model Document {
   originalName       String
   mimeType           String
   size               Int
+  fileHash           String?
+  invoiceAttachments InvoiceAttachment[]
+  extractionJobs     InvoiceExtractionJob[]
   category           String              @default("other") // "invoice", "receipt", "contract", "other"
   billingPeriod      BillingPeriod?      @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
   tenant             Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -277,6 +287,16 @@ model CostInvoice {
   servicePeriodStart DateTime?
   servicePeriodEnd   DateTime?
   totalAmountCents BigInt
+  status           String            @default("DRAFT")
+  section          String            @default("OPERATING")
+  dataJson         String            @default("{}")
+  confirmedBy      String?
+  confirmedAt      DateTime?
+  revisionOfId     String?
+  revisionOf       CostInvoice? @relation("InvoiceRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  revisions        CostInvoice[] @relation("InvoiceRevisions")
+  attachments      InvoiceAttachment[]
+  extractionJobs   InvoiceExtractionJob[]
   note             String?
   documentId       String?           @unique
   billingPeriod    BillingPeriod     @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
@@ -360,6 +380,8 @@ model HeatingSystem {
   baseSharePercent        Int                 @default(50)
   consumptionSource       String              @default("NONE")
   centralHotWater         Boolean             @default(false)
+  evidenceValidatedAt     DateTime?
+  evidenceValidatedBy     String?
   ownerOccupiedUnitId     String?
   contractualValidFrom    DateTime?
   contractualReason       String?
@@ -420,6 +442,9 @@ model HeatingOilTank {
 }
 
 model HeatingOilDelivery {
+  revisionOfId           String?
+  revisionOf             HeatingOilDelivery? @relation("DeliveryRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  revisions              HeatingOilDelivery[] @relation("DeliveryRevisions")
   id                     String                @id @default(cuid())
   tankId                 String
   deliveryDate           DateTime
@@ -451,6 +476,10 @@ model HeatingOilDelivery {
 }
 
 model OilInventoryLot {
+  revisionOfId           String?
+  revisionNumber         Int @default(1)
+  revisionOf             OilInventoryLot? @relation("LotRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  revisions              OilInventoryLot[] @relation("LotRevisions")
   id                     String              @id @default(cuid())
   tankId                 String
   deliveryId             String?             @unique
@@ -465,6 +494,7 @@ model OilInventoryLot {
   note                   String?
   tank                   HeatingOilTank      @relation(fields: [tankId], references: [id], onDelete: Cascade)
   delivery               HeatingOilDelivery? @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  co2EvidenceReference   String?
   consumptions           OilLotConsumption[]
   createdAt              DateTime            @default(now())
 
@@ -481,7 +511,7 @@ model OilLotConsumption {
   co2Grams       BigInt
   active         Boolean         @default(true)
   lot            OilInventoryLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
-  snapshot       BillingSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  snapshot       BillingSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
   createdAt      DateTime        @default(now())
 
   @@unique([lotId, snapshotId])
@@ -600,6 +630,7 @@ model ElectricityContract {
   contractReference   String?
   validFrom           DateTime
   validTo             DateTime?
+  basePriceAgreementNote String?
   basePriceAllocation String              @default("BY_CONSUMPTION")
   property            Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   tariffs             ElectricityTariff[]
@@ -746,9 +777,10 @@ model BillingSnapshot {
   resultJson        String
   revisionOfId      String?
   appliedBy         String?
-  billingPeriod     BillingPeriod       @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  billingPeriod     BillingPeriod       @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
   oilConsumptions   OilLotConsumption[]
   allocations       CostAllocation[]
+  activeHead        CategoryCalculationHead?
   createdAt         DateTime            @default(now())
 
   @@index([billingPeriodId, kind])
@@ -769,13 +801,94 @@ model CostAllocation {
   sourceType        String
   sourceReferenceId String?
   snapshotId        String?
-  billingPeriod     BillingPeriod    @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  billingPeriod     BillingPeriod    @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
   costCategory      CostCategory     @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
-  unit              Unit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  tenant            Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  snapshot          BillingSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+  unit              Unit             @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  tenant            Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  snapshot          BillingSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
   createdAt         DateTime         @default(now())
 
   @@index([billingPeriodId, costCategoryId])
   @@index([tenantId])
+}
+
+
+// Published versions are immutable; edits create a new draft version.
+model InvoiceTemplate {
+  id             String @id @default(cuid())
+  seriesId       String
+  version        Int
+  costCategoryId String
+  name           String
+  supplier       String
+  section        String @default("OPERATING")
+  status         String @default("DRAFT")
+  rulesJson      String
+  markersJson    String
+  testResultsJson String?
+  testedHash     String?
+  createdBy      String
+  createdAt      DateTime @default(now())
+  publishedAt    DateTime?
+  costCategory   CostCategory @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  extractionJobs InvoiceExtractionJob[]
+  @@unique([seriesId, version])
+  @@index([costCategoryId, status])
+}
+
+model InvoiceAttachment {
+  invoiceId String
+  documentId String
+  invoice CostInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  @@id([invoiceId, documentId])
+}
+
+model InvoiceExtractionJob {
+  id         String @id @default(cuid())
+  invoiceId  String
+  documentId String
+  templateId String?
+  status     String @default("QUEUED")
+  attempts   Int @default(0)
+  leaseUntil DateTime?
+  availableAt DateTime @default(now())
+  ocrJson    String?
+  resultJson String?
+  error      String?
+  confirmedBy String?
+  confirmedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  invoice CostInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  template InvoiceTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt])
+}
+
+// The mutable pointer is separate from immutable snapshots and consumptions.
+model CategoryCalculationHead {
+  billingPeriodId String
+  costCategoryId String
+  snapshotId String @unique
+  stale Boolean @default(false)
+  billingPeriod BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
+  snapshot BillingSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  @@id([billingPeriodId, costCategoryId])
+}
+
+model StatementRevision {
+  id String @id @default(cuid())
+  billingPeriodId String
+  tenantId String
+  revision Int
+  revisionOfId String?
+  reason String?
+  payloadJson String
+  snapshotIdsJson String
+  calculationVersion String @default("krandorf-v3")
+  issuedBy String
+  createdAt DateTime @default(now())
+  billingPeriod BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
+  @@unique([billingPeriodId, tenantId, revision])
 }

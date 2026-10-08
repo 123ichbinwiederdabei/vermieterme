@@ -1,0 +1,109 @@
+{
+  "commit": "527b9f3d985145d97d673130bfa2ca046df71451",
+  "totalChecks": 15,
+  "failedRequirements": 13,
+  "passedRequirements": 2,
+  "checks": [
+    {
+      "requirement": "Grundsteuer distributes the rental component over 280 m², excluding owner area",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected [ '5744', '14359' ] to deeply equal [ '8000', '20000' ]\n    at /audit/requirements.test.ts:57:49\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Kleinkläranlage charges one third to each tenant and the owner",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected [ '8000', '20000' ] to deeply equal [ '13000', '13000' ]\n    at /audit/requirements.test.ts:66:49\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Tenant change uses interval consumption rather than a day split of the annual total",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected [ '50000', '50000' ] to deeply equal [ '90000', '10000' ]\n    at /audit/requirements.test.ts:76:49\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Standard HeizkostenV is blocked if declared heat data has no implemented consumption calculation",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected 0 to be greater than 0\n    at /audit/requirements.test.ts:81:75\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Section 11 requires structured, valid evidence instead of a free-text reason",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected 0 to be greater than 0\n    at /audit/requirements.test.ts:85:75\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "CO2 tier rounds 11.95 kg/m²/year to 12.0 before classification",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected 100 to be 90 // Object.is equality\n    at /audit/requirements.test.ts:88:50\n    at file:///app/node_modules/@vitest/runner/dist/index.js:145:11\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:26\n    at file:///app/node_modules/@vitest/runner/dist/index.js:1243:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///app/node_modules/@vitest/runner/dist/index.js:1209:10)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:1653:37\n    at Traces.$ (file:///app/node_modules/vitest/dist/chunks/traces.CCmnQaNT.js:142:27)\n    at trace (file:///app/node_modules/vitest/dist/chunks/test.B8ej_ZHS.js:239:21)\n    at runTest (file:///app/node_modules/@vitest/runner/dist/index.js:1653:12)"
+      ]
+    },
+    {
+      "requirement": "Electricity unit prices retain sub-cent precision until the final allocation",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected '0' to be '1' // Object.is equality\n    at /audit/requirements.test.ts:96:85\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "A consumption-based Grundpreis remains payable when all meters have zero use",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected 0n to be 10000n // Object.is equality\n    at /audit/requirements.test.ts:103:38\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Inactive future meters are excluded from the current billing period",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected '100000' to be '0' // Object.is equality\n    at /audit/requirements.test.ts:108:85\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Plant electricity changes are included in the wastewater source fingerprint",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected 'b1bf5e1f158b1320b4a15af2f82ce330e5655…' not to be 'b1bf5e1f158b1320b4a15af2f82ce330e5655…' // Object.is equality\n    at /audit/requirements.test.ts:121:39\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Manual cost editor values reach the shared allocation engine",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected '0' to be '39000' // Object.is equality\n    at /audit/requirements.test.ts:126:78\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    },
+    {
+      "requirement": "Water with a valid cent amount uses the full 390 m² and retains the owner share",
+      "status": "passed",
+      "failure": []
+    },
+    {
+      "requirement": "Statements reject incomplete billing instead of silently ignoring entered manual charges",
+      "status": "failed",
+      "failure": [
+        "Error: promise resolved \"{ billingPeriodId: 'period', …(11) }\" instead of rejecting\n    at _Assertion.__VITEST_REJECTS__ (file:///app/node_modules/@vitest/expect/dist/index.js:1675:17)\n    at _Assertion.propertyGetter (file:///app/node_modules/chai/index.js:1570:27)\n    at Reflect.get (<anonymous>)\n    at Object.proxyGetter [as get] (file:///app/node_modules/chai/index.js:1659:22)\n    at /audit/requirements.test.ts:139:58\n    at file:///app/node_modules/@vitest/runner/dist/index.js:145:11\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:26\n    at file:///app/node_modules/@vitest/runner/dist/index.js:1243:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///app/node_modules/@vitest/runner/dist/index.js:1209:10)"
+      ]
+    },
+    {
+      "requirement": "Repair, replacement, refurbishment and modernization lines remain excluded",
+      "status": "passed",
+      "failure": []
+    },
+    {
+      "requirement": "Applying one MANUAL category does not supersede another category's snapshot",
+      "status": "failed",
+      "failure": [
+        "AssertionError: expected 'SUPERSEDED' to be 'APPLIED' // Object.is equality\n    at /audit/snapshots.test.ts:30:31\n    at processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at file:///app/node_modules/@vitest/runner/dist/index.js:915:20"
+      ]
+    }
+  ]
+}

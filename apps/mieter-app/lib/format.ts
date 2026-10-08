@@ -22,3 +22,10 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// Display final server-calculated cents without converting through floats.
+export function formatCents(value: string, absolute = false): string {
+  const cents = BigInt(value);
+  const amount = cents < 0n ? -cents : cents;
+  return `${cents < 0n && !absolute ? "−" : ""}${(amount / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${(amount % 100n).toString().padStart(2, "0")}`;
+}

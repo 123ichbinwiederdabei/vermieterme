@@ -1,13 +1,28 @@
 export const SMALL_WASTEWATER_CATEGORY = "Entwässerung – Kleinkläranlage";
 
-const ELIGIBLE = new Set(["WARTUNG", "PRÜFUNG", "BETRIEBSSTROM", "SCHLAMMABFUHR"]);
+const ELIGIBLE = new Set([
+  "WARTUNG",
+  "PRÜFUNG",
+  "BETRIEBSSTROM",
+  "SCHLAMMABFUHR",
+]);
 
-export function isEligibleInvoiceLine(line: { classification: string; confirmedRunningExpense: boolean }) {
-  return ELIGIBLE.has(line.classification) || (line.classification === "SONSTIGES" && line.confirmedRunningExpense);
+export function isEligibleInvoiceLine(line: {
+  classification: string;
+  confirmedRunningExpense: boolean;
+}) {
+  return (
+    ELIGIBLE.has(line.classification) ||
+    (line.classification === "SONSTIGES" && line.confirmedRunningExpense)
+  );
 }
 
 function utcDay(value: Date) {
-  return Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+  return Date.UTC(
+    value.getUTCFullYear(),
+    value.getUTCMonth(),
+    value.getUTCDate(),
+  );
 }
 
 /**
@@ -21,7 +36,15 @@ export function allocateServiceLineToPeriod(
   serviceEnd: Date | null,
   periodStart: Date,
   periodEnd: Date,
-) {
+): bigint {
+  if (amountCents < 0n)
+    return -allocateServiceLineToPeriod(
+      -amountCents,
+      serviceStart,
+      serviceEnd,
+      periodStart,
+      periodEnd,
+    );
   if (!serviceStart || !serviceEnd) return amountCents;
   const start = utcDay(serviceStart);
   const end = utcDay(serviceEnd);
@@ -40,6 +63,7 @@ export function allocateServiceLineToPeriod(
   const extraEnd = start + (Number(remainder) - 1) * dayMs;
   const extraFrom = Math.max(overlapFrom, start);
   const extraTo = Math.min(overlapTo, extraEnd);
-  const earlyDaysCovered = extraTo < extraFrom ? 0n : BigInt((extraTo - extraFrom) / dayMs + 1);
+  const earlyDaysCovered =
+    extraTo < extraFrom ? 0n : BigInt((extraTo - extraFrom) / dayMs + 1);
   return base * coveredDays + earlyDaysCovered;
 }
