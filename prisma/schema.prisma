@@ -9,14 +9,90 @@ datasource db {
 
 // Auth.js models
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  password      String?
-  accounts      Account[]
-  sessions      Session[]
+  id             String          @id @default(cuid())
+  name           String?
+  email          String?         @unique
+  emailVerified  DateTime?
+  image          String?
+  password       String?
+  accounts       Account[]
+  sessions       Session[]
+  mcpAuditEvents McpAuditEvent[]
+}
+
+// OAuth 2.1 records used by the private ChatGPT MCP connection. Secrets and
+// authorization codes are stored only as hashes.
+model McpOAuthClient {
+  id                      String                 @id
+  name                    String?
+  redirectUrisJson        String
+  tokenEndpointAuthMethod String                 @default("none")
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  authorizationCodes      McpAuthorizationCode[]
+  refreshTokens           McpRefreshToken[]
+}
+
+model McpAuthorizationCode {
+  id                  String         @id @default(cuid())
+  codeHash            String         @unique
+  clientId            String
+  userId              String
+  redirectUri         String
+  scopesJson          String
+  resource            String
+  codeChallenge       String
+  codeChallengeMethod String         @default("S256")
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  client              McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt           DateTime       @default(now())
+
+  @@index([clientId, expiresAt])
+}
+
+model McpRefreshToken {
+  id         String         @id @default(cuid())
+  tokenHash  String         @unique
+  clientId   String
+  userId     String
+  scopesJson String
+  resource   String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  client     McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now())
+
+  @@index([clientId, userId])
+  @@index([expiresAt])
+}
+
+model McpMutationTokenUse {
+  id         String   @id
+  userId     String
+  entityType String
+  itemRef    String
+  usedAt     DateTime @default(now())
+
+  @@index([userId, usedAt])
+}
+
+model McpAuditEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  entityType String
+  itemRef    String?
+  reason     String
+  requestId  String
+  beforeJson String?
+  afterJson  String?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entityType, itemRef])
 }
 
 model Account {
@@ -55,11 +131,11 @@ model VerificationToken {
 
 // App models
 model Property {
-  id                   String                @id @default(cuid())
+  id                   String                       @id @default(cuid())
   street               String
   zip                  String
   city                 String
-  totalShares          Int                   @default(100)
+  totalShares          Int                          @default(100)
   units                Unit[]
   billingPeriods       BillingPeriod[]
   externalBillings     ExternalBillingClosing[]
@@ -68,47 +144,51 @@ model Property {
   electricityMeters    ElectricityMeter[]
   costInvoices         CostInvoice[]
   propertyTaxSetting   PropertyTaxSetting?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  costAllocationRules  PropertyCostAllocationRule[]
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
 }
 
 // The tax assessment can cover land or parts of a property that are not
 // rented residential space.  This setting makes that separation explicit
 // before any tenant allocation is calculated.
 model PropertyTaxSetting {
-  id                          String   @id @default(cuid())
-  propertyId                  String   @unique
-  annualAssessmentCents       BigInt?
-  allocationMethod            String   @default("ALLOCATABLE_AMOUNT")
+  id                           String   @id @default(cuid())
+  propertyId                   String   @unique
+  annualAssessmentCents        BigInt?
+  allocationMethod             String   @default("ALLOCATABLE_AMOUNT")
   annualAllocatableAmountCents BigInt?
-  annualRateMicroCentsPerM2   BigInt?
-  allocationNote              String?
-  property                    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
+  annualRateMicroCentsPerM2    BigInt?
+  allocationNote               String?
+  property                     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
 }
 
 model Unit {
-  id                 String              @id @default(cuid())
-  propertyId         String
-  name               String
-  floor              String
-  shares             Int
-  areaM2             Decimal?
-  ownerOccupied      Boolean             @default(false)
-  property           Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  tenants            Tenant[]
-  prepayments        Prepayment[]
-  rentChanges        RentChange[]
-  heatingSystemLinks HeatingSystemUnit[]
-  electricityMeters  ElectricityMeter[]
-  costAllocations    CostAllocation[]
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  id                      String                           @id @default(cuid())
+  propertyId              String
+  name                    String
+  floor                   String
+  shares                  Int
+  areaM2                  Decimal?
+  ownerOccupied           Boolean                          @default(false)
+  property                Property                         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenants                 Tenant[]
+  prepayments             Prepayment[]
+  rentChanges             RentChange[]
+  heatingSystemLinks      HeatingSystemUnit[]
+  electricityMeters       ElectricityMeter[]
+  costAllocations         CostAllocation[]
+  costAllocationRuleUnits PropertyCostAllocationRuleUnit[]
+  directInvoiceLines      CostInvoiceLine[]
+  heatMeters              HeatMeter[]
+  createdAt               DateTime                         @default(now())
+  updatedAt               DateTime                         @updatedAt
 }
 
 model Tenant {
-  id                     String                       @id @default(cuid())
+  id                     String                         @id @default(cuid())
   unitId                 String
   salutation             String
   firstName              String
@@ -123,20 +203,20 @@ model Tenant {
   accountHolder          String?
   moveInDate             DateTime
   moveOutDate            DateTime?
-  leaseType              String                       @default("standard") // "standard", "index", "staffel"
+  leaseType              String                         @default("standard") // "standard", "index", "staffel"
   indexBaseYear          Int?
   indexReferenceValue    Float?
   indexReferenceDate     DateTime?
-  indexMinMonths         Int                          @default(12)
-  unit                   Unit                         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  indexMinMonths         Int                            @default(12)
+  unit                   Unit                           @relation(fields: [unitId], references: [id], onDelete: Cascade)
   documents              Document[]
   accessToken            TenantAccessToken?
   financialPeriods       LeaseFinancialPeriod[]
   costAllocations        CostAllocation[]
   costCategoryAgreements LeaseCostCategoryAgreement[]
   externalBillings       ExternalBillingClosingTenant[]
-  createdAt              DateTime                     @default(now())
-  updatedAt              DateTime                     @updatedAt
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
 }
 
 model CostCategory {
@@ -152,36 +232,39 @@ model CostCategory {
   costAllocations      CostAllocation[]
   invoices             CostInvoice[]
   leaseAgreements      LeaseCostCategoryAgreement[]
+  allocationRules      PropertyCostAllocationRule[]
+  flatRateCoverages    LeaseFlatRateCoverage[]
   createdAt            DateTime                     @default(now())
   updatedAt            DateTime                     @updatedAt
 }
 
 model BillingPeriod {
-  id               String            @id @default(cuid())
-  propertyId       String
-  status           String            @default("OPEN")
-  startDate        DateTime
-  endDate          DateTime
-  billingDate      DateTime?
-  sentDate         DateTime?
-  paidDate         DateTime?
-  sourceRevision   Int               @default(0)
+  id                 String                    @id @default(cuid())
+  propertyId         String
+  status             String                    @default("OPEN")
+  startDate          DateTime
+  endDate            DateTime
+  billingDate        DateTime?
+  sentDate           DateTime?
+  paidDate           DateTime?
+  sourceRevision     Int                       @default(0)
   revisionOfPeriodId String?
-  revisionReason   String?
-  copiedFromId     String?
-  copiedFrom       BillingPeriod?    @relation("BillingCopy", fields: [copiedFromId], references: [id], onDelete: SetNull)
-  copies           BillingPeriod[]   @relation("BillingCopy")
-  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  costs            Cost[]
-  prepayments      Prepayment[]
-  documents        Document[]
-  calculationHeads CategoryCalculationHead[]
+  revisionReason     String?
+  copiedFromId       String?
+  copiedFrom         BillingPeriod?            @relation("BillingCopy", fields: [copiedFromId], references: [id], onDelete: SetNull)
+  copies             BillingPeriod[]           @relation("BillingCopy")
+  property           Property                  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  costs              Cost[]
+  prepayments        Prepayment[]
+  documents          Document[]
+  calculationHeads   CategoryCalculationHead[]
   statementRevisions StatementRevision[]
-  billingSnapshots BillingSnapshot[]
-  costAllocations  CostAllocation[]
-  costInvoices     CostInvoice[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  billingSnapshots   BillingSnapshot[]
+  costAllocations    CostAllocation[]
+  costInvoices       CostInvoice[]
+  evidences          BillingPeriodEvidence[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
 }
 
 model Cost {
@@ -253,7 +336,7 @@ model VpiEntry {
 }
 
 model Document {
-  id                 String              @id @default(cuid())
+  id                 String                 @id @default(cuid())
   billingPeriodId    String?
   tenantId           String?
   fileName           String
@@ -263,49 +346,49 @@ model Document {
   fileHash           String?
   invoiceAttachments InvoiceAttachment[]
   extractionJobs     InvoiceExtractionJob[]
-  category           String              @default("other") // "invoice", "receipt", "contract", "other"
-  billingPeriod      BillingPeriod?      @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
-  tenant             Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category           String                 @default("other") // "invoice", "receipt", "contract", "other"
+  billingPeriod      BillingPeriod?         @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  tenant             Tenant?                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   heatingOilDelivery HeatingOilDelivery?
-  costInvoice        CostInvoice?        @relation("CostInvoiceDocument")
-  createdAt          DateTime            @default(now())
+  costInvoice        CostInvoice?           @relation("CostInvoiceDocument")
+  createdAt          DateTime               @default(now())
 }
 
 // Beleggestuetzte manuelle Betriebskosten. Die Umlage wird ausschliesslich
 // in der gemeinsamen serverseitigen Billing-Engine bestimmt.
 model CostInvoice {
-  id               String            @id @default(cuid())
-  billingPeriodId  String
-  propertyId       String
-  costCategoryId   String
-  supplier         String?
-  invoiceNumber    String?
-  invoiceDate      DateTime?
-  serviceDate      DateTime?
+  id                 String                 @id @default(cuid())
+  billingPeriodId    String
+  propertyId         String
+  costCategoryId     String
+  supplier           String?
+  invoiceNumber      String?
+  invoiceDate        DateTime?
+  serviceDate        DateTime?
   // Inclusive service range. A one-off service stores the same value in both
   // fields; the legacy serviceDate remains the UI-compatible shortcut.
   servicePeriodStart DateTime?
   servicePeriodEnd   DateTime?
-  totalAmountCents BigInt
-  status           String            @default("DRAFT")
-  section          String            @default("OPERATING")
-  dataJson         String            @default("{}")
-  confirmedBy      String?
-  confirmedAt      DateTime?
-  revisionOfId     String?
-  revisionOf       CostInvoice? @relation("InvoiceRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
-  revisions        CostInvoice[] @relation("InvoiceRevisions")
-  attachments      InvoiceAttachment[]
-  extractionJobs   InvoiceExtractionJob[]
-  note             String?
-  documentId       String?           @unique
-  billingPeriod    BillingPeriod     @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
-  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  costCategory     CostCategory      @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
-  document         Document?         @relation("CostInvoiceDocument", fields: [documentId], references: [id], onDelete: SetNull)
-  lines            CostInvoiceLine[]
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  totalAmountCents   BigInt
+  status             String                 @default("DRAFT")
+  section            String                 @default("OPERATING")
+  dataJson           String                 @default("{}")
+  confirmedBy        String?
+  confirmedAt        DateTime?
+  revisionOfId       String?
+  revisionOf         CostInvoice?           @relation("InvoiceRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  revisions          CostInvoice[]          @relation("InvoiceRevisions")
+  attachments        InvoiceAttachment[]
+  extractionJobs     InvoiceExtractionJob[]
+  note               String?
+  documentId         String?                @unique
+  billingPeriod      BillingPeriod          @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  property           Property               @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  costCategory       CostCategory           @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  document           Document?              @relation("CostInvoiceDocument", fields: [documentId], references: [id], onDelete: SetNull)
+  lines              CostInvoiceLine[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
 
   @@index([billingPeriodId, costCategoryId])
 }
@@ -317,9 +400,13 @@ model CostInvoiceLine {
   amountCents             BigInt
   classification          String
   confirmedRunningExpense Boolean     @default(false)
+  directUnitId            String?
   costInvoice             CostInvoice @relation(fields: [costInvoiceId], references: [id], onDelete: Cascade)
+  directUnit              Unit?       @relation(fields: [directUnitId], references: [id], onDelete: SetNull)
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
+
+  @@index([directUnitId])
 }
 
 // The landlord's documented check of a contractual operating-cost agreement.
@@ -394,6 +481,7 @@ model HeatingSystem {
   property                Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   units                   HeatingSystemUnit[]
   tanks                   HeatingOilTank[]
+  heatMeters              HeatMeter[]
   createdAt               DateTime            @default(now())
   updatedAt               DateTime            @updatedAt
 
@@ -428,6 +516,9 @@ model HeatingOilTank {
   usableVolumeLiters               Decimal?
   measurementNotes                 String?
   notes                            String?
+  activeFrom                       DateTime?
+  activeTo                         DateTime?
+  archivedAt                       DateTime?
   heatingSystem                    HeatingSystem          @relation(fields: [heatingSystemId], references: [id], onDelete: Cascade)
   deliveries                       HeatingOilDelivery[]
   inventoryLots                    OilInventoryLot[]
@@ -435,6 +526,7 @@ model HeatingOilTank {
   oilFoxDevices                    OilFoxDevice[]
   deliveryCandidates               OilDeliveryCandidate[]
   oilFoxCsvImports                 OilFoxCsvImport[]
+  inventoryBaselines               OilInventoryBaseline[]
   createdAt                        DateTime               @default(now())
   updatedAt                        DateTime               @updatedAt
 
@@ -443,8 +535,8 @@ model HeatingOilTank {
 
 model HeatingOilDelivery {
   revisionOfId           String?
-  revisionOf             HeatingOilDelivery? @relation("DeliveryRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
-  revisions              HeatingOilDelivery[] @relation("DeliveryRevisions")
+  revisionOf             HeatingOilDelivery?   @relation("DeliveryRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  revisions              HeatingOilDelivery[]  @relation("DeliveryRevisions")
   id                     String                @id @default(cuid())
   tankId                 String
   deliveryDate           DateTime
@@ -477,26 +569,27 @@ model HeatingOilDelivery {
 
 model OilInventoryLot {
   revisionOfId           String?
-  revisionNumber         Int @default(1)
-  revisionOf             OilInventoryLot? @relation("LotRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
-  revisions              OilInventoryLot[] @relation("LotRevisions")
-  id                     String              @id @default(cuid())
+  revisionNumber         Int                   @default(1)
+  revisionOf             OilInventoryLot?      @relation("LotRevisions", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  revisions              OilInventoryLot[]     @relation("LotRevisions")
+  id                     String                @id @default(cuid())
   tankId                 String
-  deliveryId             String?             @unique
+  deliveryId             String?               @unique
   sourceType             String
   sourceDate             DateTime
   quantityLiters         Decimal
   totalAmountCents       BigInt
-  co2CostCents           BigInt              @default(0)
-  co2Grams               BigInt              @default(0)
-  emissionFactorMicrogWh BigInt              @default(0)
-  energyContentKwh       Decimal             @default(0)
+  co2CostCents           BigInt                @default(0)
+  co2Grams               BigInt                @default(0)
+  emissionFactorMicrogWh BigInt                @default(0)
+  energyContentKwh       Decimal               @default(0)
   note                   String?
-  tank                   HeatingOilTank      @relation(fields: [tankId], references: [id], onDelete: Cascade)
-  delivery               HeatingOilDelivery? @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  tank                   HeatingOilTank        @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  delivery               HeatingOilDelivery?   @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
   co2EvidenceReference   String?
   consumptions           OilLotConsumption[]
-  createdAt              DateTime            @default(now())
+  createdAt              DateTime              @default(now())
+  OilInventoryBaseline   OilInventoryBaseline?
 
   @@index([tankId, sourceDate])
 }
@@ -524,6 +617,7 @@ model OilStockReading {
   oilFoxDeviceId             String?
   deviceHwid                 String?
   readingDate                DateTime
+  billingEffectiveDate       DateTime?
   quantityLiters             Decimal?
   fillLevelPercent           Int?
   batteryLevel               String?
@@ -548,6 +642,7 @@ model OilStockReading {
 
   @@unique([oilFoxDeviceId, readingDate])
   @@index([tankId, readingDate])
+  @@index([oilFoxCsvImportId])
 }
 
 model OilFoxDevice {
@@ -624,39 +719,39 @@ model OilFoxSyncState {
 }
 
 model ElectricityContract {
-  id                  String              @id @default(cuid())
-  propertyId          String
-  provider            String
-  contractReference   String?
-  validFrom           DateTime
-  validTo             DateTime?
+  id                     String              @id @default(cuid())
+  propertyId             String
+  provider               String
+  contractReference      String?
+  validFrom              DateTime
+  validTo                DateTime?
   basePriceAgreementNote String?
-  basePriceAllocation String              @default("BY_CONSUMPTION")
-  property            Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  tariffs             ElectricityTariff[]
-  meters              ElectricityMeter[]
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  basePriceAllocation    String              @default("BY_CONSUMPTION")
+  property               Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tariffs                ElectricityTariff[]
+  meters                 ElectricityMeter[]
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
 
   @@index([propertyId])
 }
 
 model ElectricityTariff {
-  id                    String              @id @default(cuid())
-  contractId            String
-  validFrom             DateTime
-  validTo               DateTime?
-  billingValidFrom      DateTime?
-  billingValidTo        DateTime?
+  id                     String              @id @default(cuid())
+  contractId             String
+  validFrom              DateTime
+  validTo                DateTime?
+  billingValidFrom       DateTime?
+  billingValidTo         DateTime?
   billingEffectiveReason String?
   // Unit prices need more precision than final Euro-cent amounts.  One Euro
   // equals 1,000,000 micro-euro; final allocation amounts remain cents.
-  priceMicroEuroPerKwh  BigInt
-  monthlyBasePriceCents BigInt
-  name                  String?
-  contract              ElectricityContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
+  priceMicroEuroPerKwh   BigInt
+  monthlyBasePriceCents  BigInt
+  name                   String?
+  contract               ElectricityContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
 
   @@unique([contractId, validFrom])
 }
@@ -682,15 +777,16 @@ model ElectricityMeter {
 }
 
 model ElectricityReading {
-  id          String           @id @default(cuid())
-  meterId     String
-  readingDate DateTime
-  readingKwh  Decimal
-  reason      String           @default("REGULAR")
-  note        String?
-  meter       ElectricityMeter @relation(fields: [meterId], references: [id], onDelete: Cascade)
-  createdAt   DateTime         @default(now())
-  audits      ElectricityReadingAudit[]
+  id                   String                    @id @default(cuid())
+  meterId              String
+  readingDate          DateTime
+  billingEffectiveDate DateTime?
+  readingKwh           Decimal
+  reason               String                    @default("REGULAR")
+  note                 String?
+  meter                ElectricityMeter          @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  createdAt            DateTime                  @default(now())
+  audits               ElectricityReadingAudit[]
 
   @@unique([meterId, readingDate])
 }
@@ -724,33 +820,36 @@ model ExternalBillingClosingTenant {
 // Every correction of a cumulative meter reading is retained as an audit
 // record. It is deliberately separate from the mutable current reading.
 model ElectricityReadingAudit {
-  id              String              @id @default(cuid())
-  readingId       String?
-  meterId         String
-  action          String
-  previousJson    String
-  reason          String
-  createdAt       DateTime            @default(now())
-  reading         ElectricityReading? @relation(fields: [readingId], references: [id], onDelete: SetNull)
+  id           String              @id @default(cuid())
+  readingId    String?
+  meterId      String
+  action       String
+  previousJson String
+  reason       String
+  createdAt    DateTime            @default(now())
+  reading      ElectricityReading? @relation(fields: [readingId], references: [id], onDelete: SetNull)
 
   @@index([meterId, createdAt])
 }
 
 model LeaseFinancialPeriod {
-  id                     String                @id @default(cuid())
-  tenantId               String
-  validFrom              DateTime
-  validTo                DateTime?
-  monthlyColdRentCents   BigInt
-  monthlyPrepaymentCents BigInt
-  reason                 String?
-  revisionOfId           String?
-  revisionReason         String?
-  supersededAt           DateTime?
-  createdBy              String?
-  tenant                 Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  components             PrepaymentComponent[]
-  createdAt              DateTime              @default(now())
+  id                                               String                  @id @default(cuid())
+  tenantId                                         String
+  validFrom                                        DateTime
+  validTo                                          DateTime?
+  monthlyColdRentCents                             BigInt
+  monthlyPrepaymentCents                           BigInt
+  monthlyGeneralOperatingAndHeatingPrepaymentCents BigInt                  @default(0)
+  monthlyFlatRateCents                             BigInt                  @default(0)
+  reason                                           String?
+  revisionOfId                                     String?
+  revisionReason                                   String?
+  supersededAt                                     DateTime?
+  createdBy                                        String?
+  tenant                                           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  components                                       PrepaymentComponent[]
+  flatRateCoverages                                LeaseFlatRateCoverage[]
+  createdAt                                        DateTime                @default(now())
 
   @@index([tenantId, validFrom])
 }
@@ -767,27 +866,27 @@ model PrepaymentComponent {
 }
 
 model BillingSnapshot {
-  id                String              @id @default(cuid())
+  id                String                   @id @default(cuid())
   billingPeriodId   String
   costCategoryId    String?
   kind              String
-  status            String              @default("APPLIED")
+  status            String                   @default("APPLIED")
   sourceFingerprint String
   sourceJson        String
   resultJson        String
   revisionOfId      String?
   appliedBy         String?
-  billingPeriod     BillingPeriod       @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
+  billingPeriod     BillingPeriod            @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
   oilConsumptions   OilLotConsumption[]
   allocations       CostAllocation[]
   activeHead        CategoryCalculationHead?
-  createdAt         DateTime            @default(now())
+  createdAt         DateTime                 @default(now())
 
   @@index([billingPeriodId, kind])
 }
 
 model CostAllocation {
-  id                String           @id @default(cuid())
+  id                String                      @id @default(cuid())
   billingPeriodId   String
   costCategoryId    String
   unitId            String
@@ -801,94 +900,216 @@ model CostAllocation {
   sourceType        String
   sourceReferenceId String?
   snapshotId        String?
-  billingPeriod     BillingPeriod    @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
-  costCategory      CostCategory     @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
-  unit              Unit             @relation(fields: [unitId], references: [id], onDelete: Restrict)
-  tenant            Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  snapshot          BillingSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
-  createdAt         DateTime         @default(now())
+  allocationRuleId  String?
+  billingPeriod     BillingPeriod               @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  costCategory      CostCategory                @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  unit              Unit                        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  tenant            Tenant?                     @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  snapshot          BillingSnapshot?            @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+  allocationRule    PropertyCostAllocationRule? @relation(fields: [allocationRuleId], references: [id], onDelete: SetNull)
+  createdAt         DateTime                    @default(now())
 
   @@index([billingPeriodId, costCategoryId])
   @@index([tenantId])
+  @@index([allocationRuleId])
 }
 
+// Effective-dated allocation policy. Percentages are derived from the stored
+// area or weight and are never persisted as the source of truth.
+model PropertyCostAllocationRule {
+  id                                    String                           @id @default(cuid())
+  propertyId                            String
+  costCategoryId                        String
+  allocationMethod                      String
+  validFrom                             DateTime
+  validTo                               DateTime?
+  requiresTenantAgreement               Boolean                          @default(false)
+  explanation                           String?
+  sourceDocumentId                      String?
+  sourceNote                            String?
+  residentialEquivalentMicroEuroPerM2   BigInt?
+  residentialAssessmentFactorMillionths BigInt?
+  municipalHebesatzBasisPoints          BigInt?
+  annualAssessmentCents                 BigInt?
+  createdBy                             String?
+  property                              Property                         @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  costCategory                          CostCategory                     @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  units                                 PropertyCostAllocationRuleUnit[]
+  allocations                           CostAllocation[]
+  createdAt                             DateTime                         @default(now())
+  updatedAt                             DateTime                         @updatedAt
+
+  @@index([propertyId, costCategoryId, validFrom])
+}
+
+model PropertyCostAllocationRuleUnit {
+  ruleId   String
+  unitId   String
+  included Boolean                    @default(true)
+  weight   Decimal?
+  areaM2   Decimal?
+  rule     PropertyCostAllocationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  unit     Unit                       @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@id([ruleId, unitId])
+  @@index([unitId])
+}
+
+model LeaseFlatRateCoverage {
+  financialPeriodId String
+  costCategoryId    String
+  financialPeriod   LeaseFinancialPeriod @relation(fields: [financialPeriodId], references: [id], onDelete: Cascade)
+  costCategory      CostCategory         @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+
+  @@id([financialPeriodId, costCategoryId])
+}
+
+model HeatMeter {
+  id              String             @id @default(cuid())
+  heatingSystemId String
+  unitId          String
+  meterNumber     String
+  meterType       String             @default("HEAT")
+  validFrom       DateTime
+  validTo         DateTime?
+  heatingSystem   HeatingSystem      @relation(fields: [heatingSystemId], references: [id], onDelete: Cascade)
+  unit            Unit               @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  readings        HeatMeterReading[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([heatingSystemId, meterNumber])
+  @@index([unitId])
+}
+
+model HeatMeterReading {
+  id                   String    @id @default(cuid())
+  meterId              String
+  readingDate          DateTime
+  billingEffectiveDate DateTime?
+  readingValue         Decimal
+  source               String    @default("MANUAL")
+  notes                String?
+  meter                HeatMeter @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  createdAt            DateTime  @default(now())
+
+  @@unique([meterId, readingDate])
+}
+
+// A verified inventory cut-over for the first internally billed period. The
+// linked inventory lot is the only pre-boundary lot admitted into FIFO.
+model OilInventoryBaseline {
+  id                  String          @id @default(cuid())
+  tankId              String
+  effectiveDate       DateTime
+  sourceMeasurementId String?
+  inventoryLotId      String          @unique
+  confirmedBy         String?
+  confirmedAt         DateTime?
+  sourceDocumentId    String?
+  note                String?
+  tank                HeatingOilTank  @relation(fields: [tankId], references: [id], onDelete: Cascade)
+  inventoryLot        OilInventoryLot @relation(fields: [inventoryLotId], references: [id], onDelete: Restrict)
+  createdAt           DateTime        @default(now())
+
+  @@unique([tankId, effectiveDate])
+}
+
+model BillingPeriodEvidence {
+  id              String        @id @default(cuid())
+  billingPeriodId String
+  kind            String
+  documentId      String?
+  note            String?
+  confirmedBy     String
+  confirmedAt     DateTime      @default(now())
+  billingPeriod   BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@unique([billingPeriodId, kind])
+}
 
 // Published versions are immutable; edits create a new draft version.
 model InvoiceTemplate {
-  id             String @id @default(cuid())
-  seriesId       String
-  version        Int
-  costCategoryId String
-  name           String
-  supplier       String
-  section        String @default("OPERATING")
-  status         String @default("DRAFT")
-  rulesJson      String
-  markersJson    String
+  id              String                 @id @default(cuid())
+  seriesId        String
+  version         Int
+  costCategoryId  String
+  name            String
+  supplier        String
+  section         String                 @default("OPERATING")
+  status          String                 @default("DRAFT")
+  rulesJson       String
+  markersJson     String
   testResultsJson String?
-  testedHash     String?
-  createdBy      String
-  createdAt      DateTime @default(now())
-  publishedAt    DateTime?
-  costCategory   CostCategory @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
-  extractionJobs InvoiceExtractionJob[]
+  testedHash      String?
+  createdBy       String
+  createdAt       DateTime               @default(now())
+  publishedAt     DateTime?
+  costCategory    CostCategory           @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
+  extractionJobs  InvoiceExtractionJob[]
+
   @@unique([seriesId, version])
   @@index([costCategoryId, status])
 }
 
 model InvoiceAttachment {
-  invoiceId String
+  invoiceId  String
   documentId String
-  invoice CostInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  invoice    CostInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  document   Document    @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
   @@id([invoiceId, documentId])
 }
 
 model InvoiceExtractionJob {
-  id         String @id @default(cuid())
-  invoiceId  String
-  documentId String
-  templateId String?
-  status     String @default("QUEUED")
-  attempts   Int @default(0)
-  leaseUntil DateTime?
-  availableAt DateTime @default(now())
-  ocrJson    String?
-  resultJson String?
-  error      String?
+  id          String           @id @default(cuid())
+  invoiceId   String
+  documentId  String
+  templateId  String?
+  status      String           @default("QUEUED")
+  attempts    Int              @default(0)
+  leaseUntil  DateTime?
+  availableAt DateTime         @default(now())
+  ocrJson     String?
+  resultJson  String?
+  error       String?
   confirmedBy String?
   confirmedAt DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  invoice CostInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
-  template InvoiceTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  invoice     CostInvoice      @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  document    Document         @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  template    InvoiceTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
   @@index([status, availableAt])
 }
 
 // The mutable pointer is separate from immutable snapshots and consumptions.
 model CategoryCalculationHead {
   billingPeriodId String
-  costCategoryId String
-  snapshotId String @unique
-  stale Boolean @default(false)
-  billingPeriod BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
-  snapshot BillingSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  costCategoryId  String
+  snapshotId      String          @unique
+  stale           Boolean         @default(false)
+  billingPeriod   BillingPeriod   @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
+  snapshot        BillingSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+
   @@id([billingPeriodId, costCategoryId])
 }
 
 model StatementRevision {
-  id String @id @default(cuid())
-  billingPeriodId String
-  tenantId String
-  revision Int
-  revisionOfId String?
-  reason String?
-  payloadJson String
-  snapshotIdsJson String
-  calculationVersion String @default("krandorf-v3")
-  issuedBy String
-  createdAt DateTime @default(now())
-  billingPeriod BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
+  id                 String        @id @default(cuid())
+  billingPeriodId    String
+  tenantId           String
+  revision           Int
+  revisionOfId       String?
+  reason             String?
+  payloadJson        String
+  snapshotIdsJson    String
+  calculationVersion String        @default("krandorf-v3")
+  issuedBy           String
+  createdAt          DateTime      @default(now())
+  billingPeriod      BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
+
   @@unique([billingPeriodId, tenantId, revision])
 }
