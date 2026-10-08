@@ -32,8 +32,7 @@ yarn-error.log*
 
 # env files
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
 
 # vercel
@@ -54,6 +53,8 @@ prisma/billing-v2-*.db
 # database
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 
 # prisma
 /prisma/*.db

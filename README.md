@@ -145,6 +145,16 @@ cp .env.example .env
 | `ADMIN_PASSWORD` | Passwort für den Admin-Account | `changeme123` |
 | `AUTH_APPLE_ID` | *(optional)* Apple OAuth Client ID | — |
 | `AUTH_APPLE_SECRET` | *(optional)* Apple OAuth Client Secret | — |
+| `MCP_BASE_URL` | Öffentliche HTTPS-Basis-URL für den privaten ChatGPT-MCP-Connector | — |
+| `MCP_SIGNING_SECRET` | Separates Geheimnis zum Signieren kurzlebiger MCP- und Mutation-Tokens (mind. 32 Zeichen) | — |
+
+## Privater ChatGPT-MCP-Connector
+
+VermieterMe stellt unter `/mcp` einen Streamable-HTTP-MCP-Server bereit. Die OAuth-2.1-Metadaten liegen unter `/.well-known/oauth-authorization-server` und `/.well-known/oauth-protected-resource`. Die dynamische Client-Registrierung, Autorisierung, Token-Ausgabe und Token-Sperrung erfolgen über `/oauth/*`.
+
+Der Connector ist ausschließlich für das in `ADMIN_EMAIL` konfigurierte Konto bestimmt. Er verwendet PKCE-S256, exakt registrierte Redirect-URIs, kurzlebige Access-Tokens und rotierende Refresh-Tokens. Für Produktion müssen `MCP_BASE_URL` auf die öffentliche HTTPS-URL und `MCP_SIGNING_SECRET` auf einen zufälligen, von `AUTH_SECRET` unabhängigen Wert gesetzt werden.
+
+In ChatGPT Developer Mode wird die Connector-URL `https://<deine-domain>/mcp` eingetragen. Schreibende Tools benötigen einen Begründungstext; Änderungen und Löschungen verlangen zuvor `get_item`, sofern sie nicht über einen spezialisierten, revisionssicheren Lifecycle-Workflow laufen. Zugangsdaten und Tokens werden niemals ausgegeben.
 
 ### Datenbank einrichten
 

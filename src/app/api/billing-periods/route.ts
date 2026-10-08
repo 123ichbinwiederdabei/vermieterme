@@ -46,6 +46,7 @@ export function POST(request: Request) {
     const overlapping = await prisma.billingPeriod.findFirst({
       where: {
         propertyId,
+        status: { not: "SUPERSEDED" },
         AND: [
           { startDate: { lt: end } },
           { endDate: { gt: start } },

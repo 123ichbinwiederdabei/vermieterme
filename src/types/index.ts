@@ -68,6 +68,7 @@ export interface TenantWithUnit extends Tenant {
 export interface BillingPeriod {
   id: string;
   propertyId: string;
+  status: "OPEN" | "SUPERSEDED";
   startDate: string;
   endDate: string;
   billingDate: string | null;

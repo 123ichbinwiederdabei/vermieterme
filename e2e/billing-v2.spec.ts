@@ -14,15 +14,17 @@ test("admin completes heating-oil billing and opens the shared PDF", async ({ pa
   await expect(page.getByRole("heading", { name: "Heizöl", exact: true })).toBeVisible();
   await expect(page.getByText("OilFox-Status")).toBeVisible();
 
-  const openingForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Anfangsbestand" }) });
-  const deliveryForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Heizöllieferung" }) });
-  const readingForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Tankstand erfassen" }) });
+  const openingForm = page.locator("form").filter({ hasText: "Anfangsbestand" });
+  const deliveryForm = page.locator("form").filter({ hasText: "Heizöllieferung" });
 
   await openingForm.getByLabel("Tank").selectOption("tank-1");
   await openingForm.getByLabel("Datum", { exact: true }).fill("2024-01-01");
   await openingForm.getByLabel("Menge (L)").fill("1000");
   await openingForm.getByLabel("Bestandswert (€)").fill("1000.00");
-  await openingForm.getByRole("button", { name: "Speichern", exact: true }).click();
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/heating-oil") && response.request().method() === "POST"),
+    openingForm.getByRole("button", { name: "Speichern", exact: true }).click(),
+  ]);
 
   await deliveryForm.getByLabel("Tank").selectOption("tank-1");
   await deliveryForm.getByLabel("Lieferdatum").fill("2024-06-01");
@@ -30,21 +32,29 @@ test("admin completes heating-oil billing and opens the shared PDF", async ({ pa
   await deliveryForm.getByLabel("Gesamtbetrag (€)").fill("1200.00");
   await deliveryForm.getByLabel("Lieferant").fill("E2E Energie");
   await deliveryForm.getByLabel("Rechnungsnummer").fill("E2E-2024");
-  await deliveryForm.getByRole("button", { name: "Speichern", exact: true }).click();
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith("/api/heating-oil") && response.request().method() === "POST"),
+    deliveryForm.getByRole("button", { name: "Speichern", exact: true }).click(),
+  ]);
+  const readingForm = page.locator("form").filter({ hasText: "Tankstand erfassen" });
 
   for (const [date, liters] of [["2024-01-01", "1000"], ["2024-12-31", "500"]]) {
-    await readingForm.getByLabel("Tank", { exact: true }).selectOption("tank-1");
+    await readingForm.locator("select").selectOption("tank-1");
     await readingForm.getByLabel("Ablesedatum").fill(date);
     await readingForm.getByLabel("Tankstand (l)").fill(liters);
-    await readingForm.getByRole("button", { name: "Speichern", exact: true }).click();
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/api/heating-oil") && response.request().method() === "POST"),
+      readingForm.getByRole("button", { name: "Speichern", exact: true }).click(),
+    ]);
   }
 
   await page.getByRole("link", { name: "Abrechnungen" }).click();
   await page.getByRole("link", { name: "Bearbeiten" }).first().click();
   await expect(page).toHaveURL(/\/billing\/bp-2024$/);
-  await page.getByRole("button", { name: "Vorschau berechnen" }).first().click();
-  await expect(page.getByText("1.600,00 €").first()).toBeVisible();
-  await page.getByRole("button", { name: "Unveränderlich übernehmen" }).first().click();
+  const heatingPreview = page.getByRole("heading", { name: "Heizöl", exact: true, level: 3 }).locator("xpath=../../..");
+  await heatingPreview.getByRole("button", { name: "Vorschau berechnen" }).click();
+  await expect(heatingPreview.getByText("1.600,00 €").first()).toBeVisible();
+  await heatingPreview.getByRole("button", { name: "Unveränderlich übernehmen" }).click();
   await expect(page.getByText("Gespeichert").first()).toBeVisible();
 
   const cookies = (await page.context().cookies()).map((row) => `${row.name}=${row.value}`).join("; ");

@@ -7,6 +7,11 @@ node_modules
 !.env.example
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+*.tsbuildinfo
+playwright-report
+test-results
 design
 docs
 apps

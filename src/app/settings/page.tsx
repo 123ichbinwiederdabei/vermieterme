@@ -334,6 +334,12 @@ export default function SettingsPage() {
           Einstellungen
         </h1>
 
+        <section className="mb-10 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-zinc-900">Grundsteuerumlage</h2>
+          <p className="mt-1 text-sm text-zinc-600">Je Objekt den umlagefähigen Wohnanteil oder Satz je m² festlegen; nicht vermietete Grundstücksanteile bleiben Vermieteranteil.</p>
+          <Link href="/settings/property-tax" className="mt-4 inline-flex rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800">Grundsteuerumlage verwalten</Link>
+        </section>
+
         {/* Landlord Info */}
         <section className="mb-10">
           <h2 className="mb-4 text-lg font-semibold text-zinc-900">
