@@ -19,6 +19,9 @@ describe("VermieterMe MCP server", () => {
     expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       "list_entity_types", "get_item", "create_item", "update_item", "delete_item",
       "revise_financial_period", "apply_billing_calculation", "correct_electricity_reading", "upload_document",
+      "create_invoice_draft", "update_invoice_draft", "confirm_invoice", "discard_invoice_draft",
+      "queue_invoice_extraction", "create_invoice_template", "update_invoice_template",
+      "test_invoice_template", "publish_invoice_template",
     ]));
     expect(tools.find((tool) => tool.name === "delete_item")?.annotations?.destructiveHint).toBe(true);
     expect(tools.find((tool) => tool.name === "list_items")?.annotations?.readOnlyHint).toBe(true);

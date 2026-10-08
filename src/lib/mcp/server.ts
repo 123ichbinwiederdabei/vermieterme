@@ -7,7 +7,9 @@ import {
 } from "./entities";
 import {
   applyBillingCalculation, correctElectricityReading, manageCredential, reviewOilFoxCandidate,
-  reviseFinancialPeriod, supersedeBillingPeriod, uploadDocument,
+  reviseFinancialPeriod, supersedeBillingPeriod, uploadDocument, createInvoiceDraft,
+  updateInvoiceDraft, confirmInvoiceDraft, discardInvoiceDraft, queueInvoiceExtraction,
+  createInvoiceTemplate, updateInvoiceTemplate, testInvoiceTemplate, publishInvoiceTemplate,
 } from "./lifecycle";
 
 export type McpRequestIdentity = {
@@ -40,7 +42,7 @@ function withErrors<T extends Record<string, unknown>>(
 export function createVermieterMeMcpServer(identity: McpRequestIdentity, requestId: string = randomUUID()) {
   const server = new McpServer(
     { name: "vermieterme", version: "1.0.0" },
-    { instructions: "Read an item with get_item immediately before updating or deleting it. Never expose redacted secrets. Use focused lifecycle tools for accounting history, audited readings, snapshots, and credentials." },
+    { instructions: "Read an item with get_item immediately before updating or deleting it. Secret fields are always redacted from results and audit logs. Generic tools only accept scalar fields and never permit primary-key changes; prefer focused tools for billing and invoice workflows." },
   );
   const auditContext = (reason: string) => ({ userId: identity.userId, requestId, reason });
 
@@ -92,7 +94,7 @@ export function createVermieterMeMcpServer(identity: McpRequestIdentity, request
 
   server.registerTool("create_item", {
     title: "Create a VermieterMe item",
-    description: "Create an ordinary mutable business record using scalar fields. Exact decimals and integers must be strings.",
+    description: "Create any addressable entity using declared scalar fields. Exact decimals and integers must be strings; relation writes are not accepted.",
     inputSchema: { entity_type: z.string().min(1), data: valuesSchema, reason: z.string().min(3).max(1000) },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, withErrors(async ({ entity_type, data, reason }) => {
@@ -114,7 +116,7 @@ export function createVermieterMeMcpServer(identity: McpRequestIdentity, request
 
   server.registerTool("delete_item", {
     title: "Delete a VermieterMe item",
-    description: "Delete an ordinary mutable record after get_item. Set acknowledge_cascade only after the user confirms the reported dependent rows.",
+    description: "Delete a record after get_item. Set acknowledge_cascade only after the user confirms the reported dependent rows.",
     inputSchema: { item_ref: z.string().min(1), mutation_token: z.string().min(1), acknowledge_cascade: z.boolean().default(false), reason: z.string().min(3).max(1000) },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, withErrors(async ({ item_ref, mutation_token, acknowledge_cascade, reason }) => {
@@ -136,21 +138,93 @@ export function createVermieterMeMcpServer(identity: McpRequestIdentity, request
   server.registerTool("apply_billing_calculation", {
     title: "Apply a replacement billing calculation",
     description: "Build the shared server-side preview, reject blockers, supersede the prior snapshot, and atomically apply exact allocations.",
-    inputSchema: { billing_period_id: z.string(), kind: z.string(), cost_category_id: z.string(), reason: z.string().min(3) },
+    inputSchema: { billing_period_id: z.string(), kind: z.string(), cost_category_id: z.string(), zero_reason: z.string().optional(), reason: z.string().min(3) },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
-  }, withErrors(async ({ billing_period_id, kind, cost_category_id, reason }) => {
+  }, withErrors(async ({ billing_period_id, kind, cost_category_id, zero_reason, reason }) => {
     requireMcpScope(identity.scopes, "vermieterme:write");
-    return result("Applied a replacement billing calculation.", { snapshot: await applyBillingCalculation(billing_period_id, kind, cost_category_id, auditContext(reason)) });
+    return result("Applied a replacement billing calculation.", { snapshot: await applyBillingCalculation(billing_period_id, kind, cost_category_id, zero_reason, auditContext(reason)) });
   }));
 
   server.registerTool("supersede_billing_period", {
-    title: "Supersede a billing period",
-    description: "Mark a billing period as superseded while preserving its history.",
+    title: "Revise an issued billing period",
+    description: "Create a replacement billing period, copy cost setup, and supersede the issued original while preserving history.",
     inputSchema: { id: z.string(), reason: z.string().min(3) },
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, withErrors(async ({ id, reason }) => {
     requireMcpScope(identity.scopes, "vermieterme:write");
-    return result("Superseded the billing period.", { item: await supersedeBillingPeriod(id, auditContext(reason)) });
+    return result("Created a billing-period revision.", { item: await supersedeBillingPeriod(id, auditContext(reason)) });
+  }));
+
+  server.registerTool("create_invoice_draft", {
+    title: "Create an invoice draft", description: "Create a draft invoice or a revision draft for a draft billing period.",
+    inputSchema: { values: valuesSchema, reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, withErrors(async ({ values, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Created an invoice draft.", { invoice: await createInvoiceDraft(values, auditContext(reason)) });
+  }));
+
+  server.registerTool("update_invoice_draft", {
+    title: "Update an invoice draft", description: "Replace draft invoice values or its note; confirmed invoices require a revision draft.",
+    inputSchema: { id: z.string(), values: valuesSchema, reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, withErrors(async ({ id, values, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Updated the invoice draft.", { invoice: await updateInvoiceDraft(id, values, auditContext(reason)) });
+  }));
+
+  server.registerTool("confirm_invoice", {
+    title: "Confirm an invoice", description: "Confirm a draft invoice using the same exact validation, evidence, duplicate, tariff, and oil-inventory workflow as the application.",
+    inputSchema: { id: z.string(), values: valuesSchema, reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, withErrors(async ({ id, values, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Confirmed the invoice.", { invoice: await confirmInvoiceDraft(id, values, auditContext(reason)) });
+  }));
+
+  server.registerTool("discard_invoice_draft", {
+    title: "Discard an invoice draft", description: "Mark a draft invoice discarded. Confirmed invoices must be corrected with a revision.",
+    inputSchema: { id: z.string(), reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, withErrors(async ({ id, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Discarded the invoice draft.", await discardInvoiceDraft(id, auditContext(reason)));
+  }));
+
+  server.registerTool("queue_invoice_extraction", {
+    title: "Queue invoice extraction", description: "Queue asynchronous OCR extraction for a draft invoice; this does not run a worker inline.",
+    inputSchema: { id: z.string(), values: valuesSchema.default({}), reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, withErrors(async ({ id, values, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Queued invoice extraction.", { job: await queueInvoiceExtraction(id, values, auditContext(reason)) });
+  }));
+
+  server.registerTool("create_invoice_template", {
+    title: "Create an invoice extraction template", description: "Create a draft extraction template, optionally as a new revision series version.",
+    inputSchema: { values: valuesSchema, reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, withErrors(async ({ values, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Created the invoice template draft.", { template: await createInvoiceTemplate(values, auditContext(reason)) });
+  }));
+
+  server.registerTool("update_invoice_template", {
+    title: "Update an invoice extraction template", description: "Update a draft template and clear its prior test result; published templates require a revision.",
+    inputSchema: { id: z.string(), values: valuesSchema, reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, withErrors(async ({ id, values, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Updated the invoice template draft.", { template: await updateInvoiceTemplate(id, values, auditContext(reason)) });
+  }));
+
+  server.registerTool("test_invoice_template", {
+    title: "Test an invoice extraction template", description: "Test a draft template against one to ten prior OCR documents and retain the exact results.",
+    inputSchema: { id: z.string(), samples: z.array(z.unknown()).min(1).max(10), reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, withErrors(async ({ id, samples, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Tested the invoice template.", { test: await testInvoiceTemplate(id, samples, auditContext(reason)) });
+  }));
+
+  server.registerTool("publish_invoice_template", {
+    title: "Publish an invoice extraction template", description: "Publish a draft template only after its current rules and markers pass expected-value testing.",
+    inputSchema: { id: z.string(), reason: z.string().min(3) }, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+  }, withErrors(async ({ id, reason }) => {
+    requireMcpScope(identity.scopes, "vermieterme:write");
+    return result("Published the invoice template.", { template: await publishInvoiceTemplate(id, auditContext(reason)) });
   }));
 
   server.registerTool("correct_electricity_reading", {

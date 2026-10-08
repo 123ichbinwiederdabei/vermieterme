@@ -7,18 +7,18 @@ import {
 } from "@/lib/mcp/entities";
 
 describe("MCP entity policy registry", () => {
-  it("discovers every Prisma model and defaults internal models to protected read-only access", () => {
+  it("discovers every Prisma model and identifies sensitive models while allowing administrator CRUD", () => {
     const entities = listEntityTypes();
     expect(entities.map((entity) => entity.name)).toContain("Property");
     expect(entities.map((entity) => entity.name)).toContain("McpAuditEvent");
-    expect(entities.find((entity) => entity.name === "BillingSnapshot")).toMatchObject({ readable: true, update: false, delete: false, protected: true });
+    expect(entities.find((entity) => entity.name === "BillingSnapshot")).toMatchObject({ readable: true, create: true, update: true, delete: true, protected: true });
     expect(entities.find((entity) => entity.name === "Property")).toMatchObject({ create: true, update: true, delete: true });
   });
 
-  it("describes exact fields while marking secrets non-writable", () => {
+  it("describes exact fields while marking secrets redacted but writable for the private administrator", () => {
     const user = describeEntityType("User");
     const password = user.fields.find((field) => field.name === "password");
-    expect(password).toMatchObject({ secret: true, writable: false });
+    expect(password).toMatchObject({ secret: true, writable: true });
   });
 
   it("round-trips opaque references including composite identifiers", () => {
@@ -31,7 +31,8 @@ describe("MCP entity policy registry", () => {
     expect(value).toEqual({ id: "x", password: "[REDACTED]", nested: { access_token: "[REDACTED]", amount: "12" } });
   });
 
-  it("hashes records deterministically independent of object key order", () => {
+  it("hashes raw records deterministically, including redacted secret changes", () => {
     expect(recordHash({ b: "2", a: "1" })).toBe(recordHash({ a: "1", b: "2" }));
+    expect(recordHash({ id: "x", token: "first" })).not.toBe(recordHash({ id: "x", token: "second" }));
   });
 });

@@ -20,15 +20,11 @@ const PROTECTED_MODELS = new Set([
   "McpRefreshToken", "McpMutationTokenUse", "McpAuditEvent",
 ]);
 
-// Direct CRUD is deliberately limited to records whose existing UI/API already
-// treats them as ordinary mutable data. All other rows remain discoverable and
-// readable and are changed only through focused lifecycle tools.
-const DIRECT_MUTATION_MODELS = new Set([
-  "Property", "PropertyTaxSetting", "Unit", "Tenant", "CostCategory", "BillingPeriod",
-  "Cost", "Prepayment", "RentChange", "PdfTemplate", "VpiEntry", "LandlordInfo",
-  "HeatingOilTank", "HeatingOilDelivery", "OilStockReading", "ElectricityContract",
-  "ElectricityTariff", "ElectricityMeter", "HeatMeter", "HeatMeterReading",
-]);
+// The private, administrator-only MCP intentionally exposes every generated
+// Prisma model. It remains constrained to scalar data and addressable records:
+// relation writes, primary-key changes, raw queries, and unredacted reads are
+// never accepted. Focused tools are still preferred for business workflows.
+const DIRECT_MUTATION_MODELS = new Set(Prisma.dmmf.datamodel.models.map((model) => model.name));
 
 function modelByName(name: string) {
   const model = Prisma.dmmf.datamodel.models.find((entry) => entry.name === name);
@@ -102,7 +98,7 @@ export function sanitizeRecord(value: unknown) {
   return sanitizeValue(serializeExact(value));
 }
 
-function stableJson(value: unknown) {
+function canonicalJson(value: unknown, redact: boolean) {
   const sort = (input: unknown): unknown => {
     if (Array.isArray(input)) return input.map(sort);
     if (input && typeof input === "object") return Object.fromEntries(
@@ -110,11 +106,17 @@ function stableJson(value: unknown) {
     );
     return input;
   };
-  return JSON.stringify(sort(sanitizeRecord(value)));
+  return JSON.stringify(sort(redact ? sanitizeRecord(value) : serializeExact(value)));
+}
+
+function stableJson(value: unknown) {
+  return canonicalJson(value, true);
 }
 
 export function recordHash(value: unknown) {
-  return createHash("sha256").update(stableJson(value)).digest("base64url");
+  // Hash raw stored values so a secret-only mutation also invalidates a grant.
+  // The raw JSON is never returned or written to the MCP audit trail.
+  return createHash("sha256").update(canonicalJson(value, false)).digest("base64url");
 }
 
 function fieldDescriptor(field: Field) {
@@ -128,7 +130,7 @@ function fieldDescriptor(field: Field) {
     unique: field.isUnique,
     hasDefault: field.hasDefaultValue,
     secret: SECRET_FIELDS.has(field.name),
-    writable: field.kind === "scalar" && !field.isReadOnly && !SECRET_FIELDS.has(field.name) &&
+    writable: field.kind === "scalar" && !field.isReadOnly &&
       field.name !== "createdAt" && field.name !== "updatedAt" && !(field.isId && field.hasDefaultValue),
   };
 }
@@ -150,9 +152,9 @@ export function describeEntityType(entityType: string) {
   return {
     ...listEntityTypes().find((entry) => entry.name === entityType),
     fields: model.fields.map(fieldDescriptor),
-    note: DIRECT_MUTATION_MODELS.has(entityType)
-      ? "Direct scalar CRUD is available subject to validation and read-before-write grants."
-      : "Read-only through generic tools. Use a focused lifecycle tool when one is available.",
+    note: PROTECTED_MODELS.has(entityType)
+      ? "Generic scalar CRUD is available to the private administrator MCP. Prefer a focused lifecycle tool to preserve this model's business workflow."
+      : "Generic scalar CRUD is available subject to validation and read-before-write grants.",
   };
 }
 
@@ -192,6 +194,9 @@ function normalizeData(model: Model, input: JsonObject, mode: "create" | "update
     if (!field) throw new Error(`Unknown or relational field: ${name}`);
     const descriptor = fieldDescriptor(field);
     if (!descriptor.writable) throw new Error(`Field is not writable: ${name}`);
+    if (mode === "update" && (field.isId || model.primaryKey?.fields.includes(name))) {
+      throw new Error(`Primary key fields cannot be changed: ${name}`);
+    }
     data[name] = normalizeScalar(field, value);
   }
   if (mode === "update" && Object.keys(data).length === 0) throw new Error("No writable fields supplied");
