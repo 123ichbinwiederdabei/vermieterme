@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { PrismaClient } from "@prisma/client";
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,7 +38,11 @@ vi.mock("@/lib/google-invoice-ocr", () => ({ googleInvoiceOcr: vi.fn() }));
 let folder: string;
 let fixture: Awaited<ReturnType<typeof createKrandorfFixture>>;
 function migratedClient(name: string) {
-  const url = `file:${path.join(folder, `${name}.db`)}`;
+  const databasePath = path.join(folder, `${name}.db`);
+  // Prisma Migrate requires the SQLite file to exist before applying the
+  // migration chain on Windows.
+  writeFileSync(databasePath, "");
+  const url = `file:${databasePath}`;
   execFileSync(
     process.execPath,
     ["node_modules/prisma/build/index.js", "migrate", "deploy"],
