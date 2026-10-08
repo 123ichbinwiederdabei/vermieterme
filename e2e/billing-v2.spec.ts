@@ -33,7 +33,7 @@ test("admin completes heating-oil billing and opens the shared PDF", async ({ pa
   await deliveryForm.getByRole("button", { name: "Speichern", exact: true }).click();
 
   for (const [date, liters] of [["2024-01-01", "1000"], ["2024-12-31", "500"]]) {
-    await readingForm.getByLabel("Tank", { exact: true }).selectOption("tank-1");
+    await readingForm.getByRole("combobox", { name: "Tank", exact: true }).selectOption("tank-1");
     await readingForm.getByLabel("Ablesedatum").fill(date);
     await readingForm.getByLabel("Tankstand (l)").fill(liters);
     await readingForm.getByRole("button", { name: "Speichern", exact: true }).click();
@@ -42,12 +42,16 @@ test("admin completes heating-oil billing and opens the shared PDF", async ({ pa
   await page.getByRole("link", { name: "Abrechnungen" }).click();
   await page.getByRole("link", { name: "Bearbeiten" }).first().click();
   await expect(page).toHaveURL(/\/billing\/bp-2024$/);
-  await page.getByRole("button", { name: "Vorschau berechnen" }).first().click();
-  await expect(page.getByText("1.600,00 €").first()).toBeVisible();
-  await page.getByRole("button", { name: "Unveränderlich übernehmen" }).first().click();
+  const oilCard = page.locator("div.rounded-xl").filter({ has: page.getByRole("heading", { name: "Heizöl", exact: true }) });
+  await oilCard.getByRole("button", { name: "Vorschau berechnen" }).click();
+  await expect(oilCard.getByText("1.600,00 €").first()).toBeVisible();
+  await oilCard.getByRole("button", { name: "Unveränderlich übernehmen" }).click();
   await expect(page.getByText("Gespeichert").first()).toBeVisible();
 
   const cookies = (await page.context().cookies()).map((row) => `${row.name}=${row.value}`).join("; ");
+  const revision = await request.get("/api/billing-periods/bp-2024/energy-preview?kind=HEATING_OIL&costCategoryId=cat-oil", { headers: { cookie: cookies } });
+  expect(revision.ok()).toBeTruthy();
+  expect(await revision.json()).toMatchObject({ totalAmountCents: "160000", blockers: [] });
   const pdf = await request.get("/api/billing-periods/bp-2024/pdf", { headers: { cookie: cookies } });
   expect(pdf.ok()).toBeTruthy();
   expect(pdf.headers()["content-type"]).toContain("application/pdf");

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Nav } from "@/components/nav";
 import { formatDate, formatCurrency } from "@/lib/format";
-import { getBillingStatus, calculateBillingTotals, getUnreviewedCount } from "@/lib/billing";
+import { billingPeriodCoversCalendarYear, getBillingStatus, calculateBillingTotals, getUnreviewedCount, isActiveBillingPeriod } from "@/lib/billing";
 import { useMultiFetch } from "@/hooks/use-fetch";
 import { apiPost, apiDelete } from "@/hooks/use-api-mutation";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
@@ -88,19 +88,16 @@ export default function BillingPage() {
     }> = [];
 
     for (const prop of properties) {
-      const propPeriods = billingPeriods.filter((bp) => bp.propertyId === prop.id);
+      const propPeriods = billingPeriods.filter((bp) => bp.propertyId === prop.id && isActiveBillingPeriod(bp));
 
       // Check if a period covering the previous year already exists
-      const hasPreviousYear = propPeriods.some((bp) => {
-        const startYear = new Date(bp.startDate).getFullYear();
-        const endYear = new Date(bp.endDate).getFullYear();
-        return startYear === previousYear || endYear === previousYear;
-      });
+      const hasPreviousYear = propPeriods.some((bp) => billingPeriodCoversCalendarYear(bp, previousYear));
 
       if (hasPreviousYear) continue;
 
       // Find the most recent period to copy from (likely the year before)
-      const sorted = propPeriods.sort(
+      const previousYearStart = Date.UTC(previousYear, 0, 1);
+      const sorted = propPeriods.filter((bp) => new Date(bp.endDate).getTime() < previousYearStart).sort(
         (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
       );
 
@@ -141,7 +138,7 @@ export default function BillingPage() {
   const previousPeriodOptions: ComboboxOption[] = useMemo(() => {
     if (!form.propertyId) return [];
     return billingPeriods
-      .filter((bp) => bp.propertyId === form.propertyId)
+      .filter((bp) => bp.propertyId === form.propertyId && isActiveBillingPeriod(bp))
       .map((bp) => ({
         value: bp.id,
         label: `${formatDate(bp.startDate)} – ${formatDate(bp.endDate)}`,

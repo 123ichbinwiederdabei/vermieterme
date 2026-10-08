@@ -14,6 +14,7 @@ import {
 import { fromScaledInteger, serializeExact } from "@/lib/billing-v2";
 import { ApiError } from "@/lib/api-utils";
 import { buildSmallWastewaterPreview } from "@/lib/cost-invoice-billing";
+import { buildManualCostPreview } from "@/lib/manual-cost-preview";
 
 export interface EnergyPreview {
   kind: "HEATING_OIL" | "ELECTRICITY" | "SMALL_WASTEWATER";
@@ -45,8 +46,12 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(serializeExact(value))).digest("hex");
 }
 
-function nearestReading<T extends { readingDate: Date; quantityLiters: unknown; validationError?: string | null }>(readings: T[], target: Date) {
-  return readings.filter((row) => row.quantityLiters != null && !row.validationError).sort((a, b) => Math.abs(a.readingDate.getTime() - target.getTime()) - Math.abs(b.readingDate.getTime() - target.getTime()))[0];
+function boundaryReading<T extends { readingDate: Date; quantityLiters: unknown; validationError?: string | null }>(readings: T[], target: Date) {
+  // A nearby OilFox measurement is useful information, but it is not an
+  // accounting boundary.  The user must enter/select a documented fallback.
+  return readings
+    .filter((row) => row.quantityLiters != null && !row.validationError && isoDay(row.readingDate) === isoDay(target))
+    .sort((a, b) => Math.abs(a.readingDate.getTime() - target.getTime()) - Math.abs(b.readingDate.getTime() - target.getTime()))[0];
 }
 
 function dateInside(value: Date, start: Date, end: Date): boolean {
@@ -57,6 +62,16 @@ function intersect(startA: Date, endA: Date, startB: Date, endB: Date) {
   const start = startA > startB ? startA : startB;
   const end = endA < endB ? endA : endB;
   return end >= start ? { start, end } : null;
+}
+
+function hasFinancialCoverage(tenant: { moveInDate: Date; moveOutDate: Date | null; financialPeriods: Array<{ validFrom: Date; validTo: Date | null }> }, start: Date, end: Date) {
+  const tenancyStart = tenant.moveInDate > start ? tenant.moveInDate : start;
+  const tenancyEnd = (tenant.moveOutDate ?? end) < end ? (tenant.moveOutDate ?? end) : end;
+  if (tenancyEnd < tenancyStart) return true;
+  const periods = tenant.financialPeriods.map((row) => ({ start: row.validFrom > tenancyStart ? row.validFrom : tenancyStart, end: (row.validTo ?? tenancyEnd) < tenancyEnd ? (row.validTo ?? tenancyEnd) : tenancyEnd })).filter((row) => row.end >= row.start).sort((a, b) => a.start.getTime() - b.start.getTime());
+  let expected = tenancyStart.getTime();
+  for (const row of periods) { if (row.start.getTime() > expected) return false; expected = Math.max(expected, row.end.getTime() + 86_400_000); }
+  return expected > tenancyEnd.getTime();
 }
 
 export async function buildHeatingOilPreview(
@@ -76,7 +91,10 @@ export async function buildHeatingOilPreview(
                 include: {
                   stockReadings: true,
                   inventoryLots: {
-                    include: { consumptions: { where: { active: true } } },
+                    // Revisions of this billing period must start from the
+                    // same inventory state as the original preview.  Its own
+                    // active snapshot is superseded only after Apply.
+                    include: { consumptions: { where: { active: true, snapshot: { billingPeriodId: { not: billingPeriodId } } } } },
                   },
                   deliveries: true,
                   deliveryCandidates: true,
@@ -103,7 +121,7 @@ export async function buildHeatingOilPreview(
   const connectedIds = new Set(system.units.map((row) => row.unitId));
   const units = period.property.units.filter((unit) => connectedIds.has(unit.id));
   for (const unit of units) if (!unit.areaM2 || toScaledInteger(unit.areaM2.toString()) <= 0n) blockers.push(`Wohnfläche für ${unit.name} fehlt.`);
-  for (const unit of units) for (const tenant of unit.tenants) if (tenant.moveInDate <= period.endDate && (!tenant.moveOutDate || tenant.moveOutDate >= period.startDate) && tenant.financialPeriods.length === 0) blockers.push(`Für ${tenant.firstName} ${tenant.lastName} fehlt eine Miet-/NK-Finanzperiode.`);
+  for (const unit of units) for (const tenant of unit.tenants) if (!hasFinancialCoverage(tenant, period.startDate, period.endDate)) blockers.push(`Miet-/NK-Finanzperioden für ${tenant.firstName} ${tenant.lastName} decken den Abrechnungszeitraum nicht lückenlos ab.`);
 
   let totalAmount = 0n;
   let totalCo2Cost = 0n;
@@ -112,15 +130,14 @@ export async function buildHeatingOilPreview(
   const source: Array<Record<string, unknown>> = [];
 
   for (const tank of system.tanks) {
-    const startReading = nearestReading(tank.stockReadings, period.startDate);
-    const endReading = nearestReading(tank.stockReadings, period.endDate);
+    const startReading = boundaryReading(tank.stockReadings, period.startDate);
+    const endReading = boundaryReading(tank.stockReadings, period.endDate);
     if (!startReading?.quantityLiters) blockers.push(`Valider Anfangstankstand für ${tank.name} fehlt.`);
     if (!endReading?.quantityLiters) blockers.push(`Valider Endtankstand für ${tank.name} fehlt.`);
     if (!startReading?.quantityLiters || !endReading?.quantityLiters) continue;
     const startGap = Math.round(Math.abs(startReading.readingDate.getTime() - period.startDate.getTime()) / 86_400_000);
     const endGap = Math.round(Math.abs(endReading.readingDate.getTime() - period.endDate.getTime()) / 86_400_000);
-    if (startGap > 3) warnings.push(`Anfangsmessung für ${tank.name} liegt ${startGap} Tage von der Periodengrenze entfernt.`);
-    if (endGap > 3) warnings.push(`Endmessung für ${tank.name} liegt ${endGap} Tage von der Periodengrenze entfernt.`);
+    if (startGap > 0 || endGap > 0) blockers.push(`Die Grenzmessung für ${tank.name} muss am Abrechnungsstichtag liegen oder als Ersatzmessung dokumentiert sein.`);
     if (tank.deliveryCandidates.some((candidate) => candidate.status === "PENDING")) warnings.push(`${tank.name} hat ungeklärte mögliche Lieferungen.`);
     if (tank.capacityLiters && toScaledInteger(endReading.quantityLiters.toString()) > toScaledInteger(tank.capacityLiters.toString())) blockers.push(`Endbestand für ${tank.name} überschreitet die Tankkapazität.`);
     const delivered = tank.deliveries
@@ -334,5 +351,6 @@ export async function buildEnergyPreview(kind: string, billingPeriodId: string, 
   if (kind === "HEATING_OIL") return buildHeatingOilPreview(billingPeriodId, costCategoryId);
   if (kind === "ELECTRICITY") return buildElectricityPreview(billingPeriodId, costCategoryId);
   if (kind === "SMALL_WASTEWATER") return buildSmallWastewaterPreview(billingPeriodId, costCategoryId);
+  if (kind === "MANUAL") return buildManualCostPreview(billingPeriodId, costCategoryId);
   throw new ApiError("Unbekannte Energie-Kostenart", 400);
 }

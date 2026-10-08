@@ -67,8 +67,25 @@ model Property {
   electricityContracts ElectricityContract[]
   electricityMeters    ElectricityMeter[]
   costInvoices         CostInvoice[]
+  propertyTaxSetting   PropertyTaxSetting?
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
+}
+
+// The tax assessment can cover land or parts of a property that are not
+// rented residential space.  This setting makes that separation explicit
+// before any tenant allocation is calculated.
+model PropertyTaxSetting {
+  id                          String   @id @default(cuid())
+  propertyId                  String   @unique
+  annualAssessmentCents       BigInt?
+  allocationMethod            String   @default("ALLOCATABLE_AMOUNT")
+  annualAllocatableAmountCents BigInt?
+  annualRateMicroCentsPerM2   BigInt?
+  allocationNote              String?
+  property                    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
 
 model Unit {
@@ -140,6 +157,7 @@ model CostCategory {
 model BillingPeriod {
   id               String            @id @default(cuid())
   propertyId       String
+  status           String            @default("OPEN")
   startDate        DateTime
   endDate          DateTime
   billingDate      DateTime?

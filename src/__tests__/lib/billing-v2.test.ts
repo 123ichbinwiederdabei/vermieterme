@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocateCents, calculateElectricityCostCents, calculateFifoConsumption, prorateMonthlyCents, toScaledInteger } from "@/lib/billing-v2";
+import { allocateCents, calculateAnnualAreaRateCents, calculateElectricityCostCents, calculateFifoConsumption, prorateMonthlyCents, toScaledInteger } from "@/lib/billing-v2";
 import { euroToCents, euroToMicroEuros, microEurosPerKwhToEuro, microEurosPerKwhToInput } from "@/lib/money";
 
 describe("Billing v2 exact arithmetic", () => {
@@ -36,5 +36,11 @@ describe("Billing v2 exact arithmetic", () => {
   it("prorates partial months by calendar days", () => {
     expect(prorateMonthlyCents(3100n, "2025-01-16", "2025-01-31")).toBe(1600n);
     expect(toScaledInteger("12,345")).toBe(12345n);
+  });
+
+  it("prices the Grundsteuer rate in Euro per square metre without floats", () => {
+    expect(calculateAnnualAreaRateCents(1_000_000n, "80")).toBe(8_000n);
+    expect(calculateAnnualAreaRateCents(1_234_567n, "80.5")).toBe(9_938n);
+    expect(() => calculateAnnualAreaRateCents(-1n, "80")).toThrow("nicht negativ");
   });
 });

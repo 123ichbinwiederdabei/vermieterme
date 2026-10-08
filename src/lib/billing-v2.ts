@@ -141,6 +141,19 @@ export function calculateElectricityCostCents(
   };
 }
 
+export function calculateAnnualAreaRateCents(
+  rateMicroEuroPerM2: bigint,
+  areaM2: string | number
+): bigint {
+  if (rateMicroEuroPerM2 < 0n) throw new Error("Der Grundsteuer-Satz darf nicht negativ sein.");
+  const scaledAreaM2 = toScaledInteger(areaM2);
+  if (scaledAreaM2 < 0n) throw new Error("Die Wohnfläche darf nicht negativ sein.");
+  // The persisted legacy field name says "MicroCents", but the UI stores the
+  // entered Euro rate with six decimals (micro-euro). Area uses three decimals.
+  // Convert micro-euro * milli-m² to cents with one final integer rounding.
+  return roundFraction(rateMicroEuroPerM2 * scaledAreaM2, 10_000_000n);
+}
+
 export function prorateMonthlyCents(
   monthlyCents: bigint,
   validFrom: string | Date,

@@ -16,6 +16,9 @@ export function effectiveDistributionKey(
 }
 
 export function getBillingStatus(bp: BillingPeriodWithProperty) {
+  if (bp.status === "SUPERSEDED") {
+    return { label: "Ersetzt", className: "bg-zinc-200 text-zinc-600" };
+  }
   if (bp.paidDate) {
     return { label: "Bezahlt", className: "bg-green-100 text-green-700" };
   }
@@ -29,6 +32,22 @@ export function getBillingStatus(bp: BillingPeriodWithProperty) {
     return { label: "In Bearbeitung", className: "bg-amber-100 text-amber-700" };
   }
   return { label: "Offen", className: "bg-zinc-100 text-zinc-600" };
+}
+
+export function isActiveBillingPeriod(
+  period: Pick<BillingPeriodWithProperty, "status">
+): boolean {
+  return period.status !== "SUPERSEDED";
+}
+
+export function billingPeriodCoversCalendarYear(
+  period: Pick<BillingPeriodWithProperty, "startDate" | "endDate">,
+  year: number
+): boolean {
+  const yearStart = Date.UTC(year, 0, 1);
+  const yearEnd = Date.UTC(year, 11, 31, 23, 59, 59, 999);
+  return new Date(period.startDate).getTime() <= yearEnd
+    && new Date(period.endDate).getTime() >= yearStart;
 }
 
 export function getUnreviewedCount(
