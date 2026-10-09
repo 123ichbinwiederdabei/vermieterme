@@ -588,7 +588,7 @@ export async function buildElectricityPreview(
             start: row.start,
             end: row.end,
             quantity: row.consumptionKwh,
-            basis: `${row.consumptionKwh} kWh · Zähler ${row.meterNumber} · ${row.priceMicroEuroPerKwh} µ€/kWh${row.fallbackNotes ? ` · Ersatzablesung: ${row.fallbackNotes}` : ""}`,
+            basis: `${row.consumptionKwh} kWh · Zähler ${row.meterNumber} · ${row.priceMicroEuroPerKwh} µ€/kWh${row.fallbackNotes ? ` · Ersatzablesung: ${row.fallbackNotes}` : ""}${row.boundaryNotes ? ` · ${row.boundaryNotes}` : ""}`,
           });
         } else {
           try {

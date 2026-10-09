@@ -16,6 +16,8 @@ export type MeterInput = {
   validTo?: Date | null;
   readings: {
     readingDate: Date;
+    billingEffectiveDate?: Date | null;
+    confirmed?: boolean;
     readingKwh: { toString(): string };
     reason?: string;
     note?: string | null;
@@ -49,6 +51,7 @@ export type ElectricInterval = {
   numerator: bigint;
   priceMicroEuroPerKwh: string;
   fallbackNotes?: string;
+  boundaryNotes?: string;
 };
 export const nextDay = (date: Date) => new Date(date.getTime() + 86_400_000);
 export const priorDay = (date: Date) => new Date(date.getTime() - 86_400_000);
@@ -117,6 +120,21 @@ export function meterIntervals(
   const readings = new Map(
     meter.readings.map((row) => [isoDay(row.readingDate), row]),
   );
+  for (const row of meter.readings.filter(row => row.billingEffectiveDate)) {
+    const date = row.billingEffectiveDate!;
+    // A measured cutover starts the following period and closes the previous
+    // calendar period the day before. Retain the actual measurement date too.
+    if (row.confirmed === false || !row.note?.trim() || isoDay(date) !== isoDay(priorDay(row.readingDate))) {
+      blockers.push(`Schlussgrenze für ${meter.meterNumber} ist nicht bestätigt oder dokumentiert.`);
+      continue;
+    }
+    const existing = readings.get(isoDay(date));
+    if (existing && existing.readingKwh.toString() !== row.readingKwh.toString()) {
+      blockers.push(`Widersprüchliche Grenzablesung für ${meter.meterNumber}.`);
+      continue;
+    }
+    if (!existing) readings.set(isoDay(date), row);
+  }
   for (const date of dates)
     if (!readings.has(isoDay(date)))
       blockers.push(
@@ -164,6 +182,10 @@ export function meterIntervals(
             .filter((reading) => reading?.reason === "DOCUMENTED_ESTIMATE")
             .map((reading) => reading!.note)
             .join("; ") || undefined,
+        boundaryNotes: [readings.get(isoDay(a)), readings.get(isoDay(b))]
+          .filter(reading => reading?.billingEffectiveDate && (isoDay(reading.readingDate) !== isoDay(a) && isoDay(reading.readingDate) !== isoDay(b)))
+          .map(reading => `Tatsächliche Grenzablesung ${isoDay(reading!.readingDate)}: ${reading!.note}`)
+          .join("; ") || undefined,
       });
     } catch (error) {
       blockers.push(

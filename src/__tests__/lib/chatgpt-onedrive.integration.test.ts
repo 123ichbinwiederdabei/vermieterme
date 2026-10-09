@@ -286,3 +286,38 @@ it("uses dated contract-backed consumption rules for electricity base prices and
   expect(missing.blockers.join(" ")).toMatch(/Ablesung|Messwert|Zählerstand/);
   expect(missing.allocations.filter((a) => (a as { allocationRuleId?: string }).allocationRuleId === rule.id)).toEqual([]);
 });
+
+it("revises the entire selected contract transition to November with uninterrupted old financial terms and immutable source documents", async () => {
+  const f=await createKrandorfFixture(state.db,"defer-contract");
+  const finances=await state.db.leaseFinancialPeriod.findMany({where:{tenantId:{in:f.tenants.map(t=>t.id)}}});
+  for(const row of finances){await state.db.leaseFinancialPeriod.update({where:{id:row.id},data:{sourceDocumentId:f.document.id}});await state.db.leaseFinancialPeriod.create({data:{tenantId:row.tenantId,validFrom:new Date("2026-01-01"),validTo:new Date("2026-09-30"),monthlyColdRentCents:60000n,monthlyPrepaymentCents:15000n}});}
+  await state.db.heatingSystem.update({where:{id:f.tank.heatingSystemId},data:{contractualValidFrom:new Date("2026-10-01")}});
+  const rules=await state.db.propertyCostAllocationRule.findMany({where:{propertyId:f.property.id}}),agreements=await state.db.leaseCostCategoryAgreement.findMany({where:{tenantId:{in:f.tenants.map(t=>t.id)}}});
+  const sourceBefore=await state.db.document.findUniqueOrThrow({where:{id:f.document.id}});
+  const input={propertyId:f.property.id,previousValidFrom:"2026-10-01",validFrom:"2026-11-01",financialPeriodIds:finances.map(r=>r.id),ruleIds:rules.map(r=>r.id),agreementIds:agreements.map(r=>r.id),heatingSystemId:f.tank.heatingSystemId};
+  const preview=await previewDomainChange("defer_contract_transition",input,audit);
+  expect(await state.db.leaseFinancialPeriod.count({where:{revisionOfId:{in:finances.map(r=>r.id)}}})).toBe(0);
+  const result=await commitDomainChange(preview.previewId,true,audit);expect(await commitDomainChange(preview.previewId,true,audit)).toEqual(result);
+  for(const row of finances){const revised=await state.db.leaseFinancialPeriod.findFirstOrThrow({where:{revisionOfId:row.id}});expect(revised.validFrom).toEqual(new Date("2026-11-01"));expect(revised.monthlyColdRentCents).toBe(row.monthlyColdRentCents);const old=await state.db.leaseFinancialPeriod.findFirstOrThrow({where:{tenantId:row.tenantId,validFrom:new Date("2026-01-01")}});expect(old.validTo).toEqual(new Date("2026-10-31"));expect(old.monthlyColdRentCents).toBe(60000n);}
+  expect(await state.db.document.findUniqueOrThrow({where:{id:f.document.id}})).toEqual(sourceBefore);
+  expect(await state.db.propertyCostAllocationRule.count({where:{propertyId:f.property.id,supersededAt:null,validFrom:new Date("2026-11-01")}})).toBe(rules.length);
+  await state.db.billingPeriod.update({where:{id:f.period.id},data:{sentDate:new Date()}});
+  await expect(previewDomainChange("defer_contract_transition",input,audit)).rejects.toThrow("Ausgestellte");
+});
+
+it("atomically moves an open period boundary, preserves actual readings and rejects already applied periods", async () => {
+  const f=await createKrandorfFixture(state.db,"align-boundary");
+  const previous=await state.db.billingPeriod.create({data:{propertyId:f.property.id,startDate:new Date("2026-01-01"),endDate:new Date("2026-09-12")}}),bridge=await state.db.billingPeriod.create({data:{propertyId:f.property.id,startDate:new Date("2026-09-13"),endDate:new Date("2026-09-30")}});
+  const meters=await state.db.electricityMeter.findMany({where:{propertyId:f.property.id}}),readings=[];
+  for(const meter of meters)readings.push(await state.db.electricityReading.create({data:{meterId:meter.id,readingDate:new Date("2026-09-12"),readingKwh:"123",confirmed:true}}));
+  const input={propertyId:f.property.id,previousPeriodId:previous.id,nextPeriodId:f.period.id,boundaryDate:"2026-09-12",replacedPeriodIds:[bridge.id],readingIds:readings.map(r=>r.id)};
+  const preview=await previewDomainChange("align_billing_boundary",input,audit);
+  expect((await state.db.billingPeriod.findUniqueOrThrow({where:{id:f.period.id}})).startDate).toEqual(new Date("2026-10-01"));
+  const result=await commitDomainChange(preview.previewId,true,audit);expect(await commitDomainChange(preview.previewId,true,audit)).toEqual(result);
+  expect((await state.db.billingPeriod.findUniqueOrThrow({where:{id:previous.id}})).endDate).toEqual(new Date("2026-09-11"));
+  expect((await state.db.billingPeriod.findUniqueOrThrow({where:{id:f.period.id}})).startDate).toEqual(new Date("2026-09-12"));
+  expect((await state.db.billingPeriod.findUniqueOrThrow({where:{id:bridge.id}})).status).toBe("SUPERSEDED");
+  for(const old of readings){const row=await state.db.electricityReading.findUniqueOrThrow({where:{id:old.id}});expect(row.readingDate).toEqual(old.readingDate);expect(row.readingKwh).toEqual(old.readingKwh);expect(row.billingEffectiveDate).toEqual(new Date("2026-09-11"));}
+  await state.db.billingPeriod.update({where:{id:previous.id},data:{paidDate:new Date()}});
+  await expect(previewDomainChange("align_billing_boundary",input,audit)).rejects.toThrow("unveränderlich");
+});

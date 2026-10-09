@@ -1,3 +1,4 @@
+import { alignBillingBoundary, deferContractTransition } from "@/lib/billing-adjustments";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { recordHash, recordLifecycleAudit, sanitizeRecord } from "@/lib/mcp/entities";
@@ -7,7 +8,7 @@ import { serializeExact, prorateMonthlyCents } from "@/lib/billing-v2";
 import { archiveName } from "@/lib/document-paths";
 import { storageTestSettings } from "@/lib/archive-transport";
 
-export const DOMAIN_ACTIONS = ["create_property", "update_property", "create_unit", "change_unit_state", "create_tenancy", "update_tenant_contacts", "end_tenancy", "move_tenant", "add_lease_party", "end_lease_party", "set_financial_period", "set_allocation_rule", "create_cost_category", "set_period_category", "create_billing_period", "split_billing_period", "set_electricity_tariff", "create_electricity_contract", "create_electricity_meter", "record_electricity_reading", "record_heat_reading", "record_consumption_reading", "configure_heating_system", "select_active_tank", "configure_document_storage", "configure_microsoft_source", "update_landlord", "confirm_invoice_sample", "set_cost_agreement", "record_billing_evidence", "create_heat_meter", "end_meter_assignment", "create_heating_system", "create_oil_tank", "record_oil_stock", "set_oil_opening_balance", "revise_allocation_rule", "revise_financial_period", "correct_electricity_reading", "revise_billing_period", "set_property_tax_basis", "prepare_krandorf_transition"] as const;
+export const DOMAIN_ACTIONS = ["create_property", "update_property", "create_unit", "change_unit_state", "create_tenancy", "update_tenant_contacts", "end_tenancy", "move_tenant", "add_lease_party", "end_lease_party", "set_financial_period", "set_allocation_rule", "create_cost_category", "set_period_category", "create_billing_period", "split_billing_period", "set_electricity_tariff", "create_electricity_contract", "create_electricity_meter", "record_electricity_reading", "record_heat_reading", "record_consumption_reading", "configure_heating_system", "select_active_tank", "configure_document_storage", "configure_microsoft_source", "update_landlord", "confirm_invoice_sample", "set_cost_agreement", "record_billing_evidence", "create_heat_meter", "end_meter_assignment", "create_heating_system", "create_oil_tank", "record_oil_stock", "set_oil_opening_balance", "revise_allocation_rule", "revise_financial_period", "correct_electricity_reading", "revise_billing_period", "set_property_tax_basis", "prepare_krandorf_transition", "align_billing_boundary", "defer_contract_transition"] as const;
 export type DomainAction = typeof DOMAIN_ACTIONS[number];
 export type AuditContext = { userId: string; requestId: string; reason: string };
 type Input = Record<string, unknown>;
@@ -60,7 +61,7 @@ export async function executeDomainChange(db: Db, action: DomainAction, input: I
   }
   const before = await domainState(db);
   let result: unknown;
-  if (action === "prepare_krandorf_transition") {
+  if (action === "align_billing_boundary") { result = await alignBillingBoundary(db, input, context); } else if (action === "defer_contract_transition") { result = await deferContractTransition(db, input, context); } else if (action === "prepare_krandorf_transition") {
     const propertyId = text(input, "propertyId"); const sourceDocumentId = await evidence(db, input);
     const units = await db.unit.findMany({ where: { propertyId }, orderBy: { id: "asc" } });
     if (units.length !== 3 || units.filter((u) => u.ownerOccupied).length !== 1 || units.map((u) => u.areaM2?.toString()).sort().join(",") !== ["110", "200", "80"].sort().join(",")) throw new Error("Krandorf-Profil benotigt eindeutig bestatigte 80/200/110-m2-Einheiten");
@@ -269,7 +270,7 @@ async function mutablePeriod(db: Db, id: string) {
 }
 
 async function domainState(db: Db) {
-  return serializeExact({ properties: await db.property.findMany(), units: await db.unit.findMany({ include: { statePeriods: true } }), tenants: await db.tenant.findMany({ include: { financialPeriods: { where: { supersededAt: null } }, parties: true } }), rules: await db.propertyCostAllocationRule.findMany({ where: { supersededAt: null }, include: { units: true } }), tariffs: await db.electricityTariff.findMany(), heatingSystems: await db.heatingSystem.findMany(), storage: await db.documentStorage.findMany(), sources: await db.microsoftImportSource.findMany(), taxBasis: await db.propertyTaxSetting.findMany(), costAgreements: await db.leaseCostCategoryAgreement.findMany(), heatReadings: await db.heatMeterReading.findMany(), electricityReadings: await db.electricityReading.findMany(), oilStocks: await db.oilStockReading.findMany(), landlord: await db.landlordInfo.findMany() });
+  return serializeExact({ periods: await db.billingPeriod.findMany(), properties: await db.property.findMany(), units: await db.unit.findMany({ include: { statePeriods: true } }), tenants: await db.tenant.findMany({ include: { financialPeriods: { where: { supersededAt: null } }, parties: true } }), rules: await db.propertyCostAllocationRule.findMany({ where: { supersededAt: null }, include: { units: true } }), tariffs: await db.electricityTariff.findMany(), heatingSystems: await db.heatingSystem.findMany(), storage: await db.documentStorage.findMany(), sources: await db.microsoftImportSource.findMany(), taxBasis: await db.propertyTaxSetting.findMany(), costAgreements: await db.leaseCostCategoryAgreement.findMany(), heatReadings: await db.heatMeterReading.findMany(), electricityReadings: await db.electricityReading.findMany(), oilStocks: await db.oilStockReading.findMany(), landlord: await db.landlordInfo.findMany() });
 }
 async function propertyForAction(db: Db, action: DomainAction, input: Input): Promise<string | undefined> {
   if (input.propertyId) return String(input.propertyId);

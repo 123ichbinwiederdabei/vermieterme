@@ -1,7 +1,7 @@
 // Every applied snapshot retains this policy, its effective date and its version.
 // Change the version when a billing key or evidence rule changes.
 export const ALLOCATION_POLICY = {
-  version: "krandorf-2026-10-v1",
+  version: "krandorf-dated-boundaries-v2",
   effectiveFrom: "2026-10-01",
   heating: "FIFO_ACTUAL_CONSUMPTION_VALIDATED_HEIZKOSTENV_LESS_LANDLORD_CO2",
   electricity: "INTERMEDIATE_METER_READINGS_EXACT_TARIFF_AGREED_BASE_KEY",
