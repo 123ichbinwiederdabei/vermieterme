@@ -6,6 +6,7 @@ import { invoiceArchivePath, archiveName } from "@/lib/document-paths";
 import { categoryCode } from "@/lib/invoice-categories";
 import { recordHash } from "@/lib/mcp/entities";
 import { MicrosoftGraph } from "@/lib/microsoft-graph";
+import { archiveTransport, archiveBackend, storageTestSettings, type ArchiveTransport } from "@/lib/archive-transport";
 
 const extensions: Record<string, string> = { "application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "message/rfc822": ".eml" };
 export const uploadsDirectory = () => path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), "data", "uploads"));
@@ -63,7 +64,7 @@ export async function queueDocumentArchive(documentId: string, propertyId: strin
   return archive;
 }
 
-export async function processArchive(archiveId: string, graph = new MicrosoftGraph()) {
+export async function processArchive(archiveId: string, graph: ArchiveTransport = archiveTransport()) {
   const archive = await prisma.documentArchive.findUniqueOrThrow({ where: { id: archiveId }, include: { document: true } });
   const storage = await prisma.documentStorage.findUniqueOrThrow({ where: { id: archive.storageId } });
   if (!storage.enabled) throw new Error("Document storage is disabled");
@@ -87,15 +88,22 @@ export async function retryDocumentArchive(documentId: string) {
   return prisma.backgroundJob.upsert({ where: { dedupeKey: `archive:${archive.id}` }, create: { kind: "ARCHIVE", dedupeKey: `archive:${archive.id}`, payloadJson: JSON.stringify({ archiveId: archive.id }) }, update: { status: "QUEUED", attempts: 0, availableAt: new Date(), leaseUntil: null, leaseToken: null, error: null } });
 }
 
-export async function testDocumentStorage(propertyId: string, graph = new MicrosoftGraph()) {
+export async function testDocumentStorage(propertyId: string, graph: ArchiveTransport = archiveTransport()) {
   const storage = await prisma.documentStorage.findUniqueOrThrow({ where: { propertyId } });
   const folder = await graph.request(`drives/${encodeURIComponent(storage.driveId)}/items/${encodeURIComponent(storage.rootItemId)}`);
   if (!folder.folder) throw new Error("OneDrive-Ziel muss ein Ordner sein");
-  await prisma.documentStorage.update({ where: { propertyId }, data: { testedAt: new Date(), testedFingerprint: recordHash({ propertyId, driveId: storage.driveId, rootItemId: storage.rootItemId, objectFolder: storage.objectFolder }) } });
-  return { propertyId, driveId: storage.driveId, rootItemId: storage.rootItemId, accessible: true, name: folder.name, writeVerification: "First approved upload must pass full byte verification" };
+  await prisma.documentStorage.update({ where: { propertyId }, data: { testedAt: new Date(), testedFingerprint: recordHash(storageTestSettings({ propertyId, driveId: storage.driveId, rootItemId: storage.rootItemId, objectFolder: storage.objectFolder })) } });
+  return { propertyId, backend: archiveBackend(), driveId: storage.driveId, rootItemId: storage.rootItemId, accessible: true, name: folder.name, writeVerification: "First approved upload must pass full byte verification" };
 }
 export async function resolveOneDriveTarget(mailbox: string, folderPath: string, graph = new MicrosoftGraph()) {
   if (folderPath.split("/").some((part) => !part || part === "." || part === "..")) throw new Error("Invalid folder path");
+  if (archiveBackend() === "rclone") {
+    if (folderPath !== process.env.RCLONE_ARCHIVE_FOLDER_PATH) throw new Error("Select the runtime-bound rclone folder path");
+    const driveId = process.env.RCLONE_ARCHIVE_DRIVE_ID!; const rootItemId = process.env.RCLONE_ARCHIVE_ROOT_ID!;
+    const transport = archiveTransport(); const base = `drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(rootItemId)}`;
+    const item = await transport.request(base);
+    return { targets: [{ driveId, rootItemId, path: folderPath, driveName: "OneDrive via rclone", name: item.name, children: (await transport.request(`${base}/children?$select=id,name,folder,file,size`)).value }], instruction: "Review exact runtime-bound target; no folders created" };
+  }
   const response = await graph.request(`users/${encodeURIComponent(mailbox)}/drives`);
   const drives = (response.value || []) as Array<{ id: string; name: string }>;
   const targets = [];

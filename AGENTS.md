@@ -31,3 +31,7 @@
 - Persist archive, import and outbox jobs with leases and dedupe keys. Reconcile ambiguous Microsoft sends before any retry; a 202 response proves acceptance only.
 - Require verified originals and final archive paths before statement issuance. Keep revision artifacts, receipt indexes and dispatch evidence linked; preserve R001 when producing R002.
 - Back up SQLite and original uploads together and verify restoration. Version-4 metadata backups retain audit principals/events without passwords, OAuth tokens or runtime secrets; older metadata backups require isolated migration.
+
+- Preserve the currently approved Microsoft runtime bindings when updating both Swarm services. CapRover app definitions can differ from current service Env; verify and retain these bindings through the authenticated deployment configuration without logging their values. Do not restart or edit unrelated apps to synchronize them.
+
+- For rclone archives, mount only the dedicated VermieterMe-root configuration and the read-only static binary into both services. Preserve UID 1001 ownership and private config modes; never mount shared OneDrive credentials or expand Graph permissions for this transport. Runtime root changes require a new storage preflight. Mail and import sources still use Graph.

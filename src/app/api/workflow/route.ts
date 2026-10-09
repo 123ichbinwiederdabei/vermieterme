@@ -3,7 +3,7 @@ import { apiHandler, requireAdmin, jsonOk, ApiError } from "@/lib/api-utils";
 import { prisma } from "@/lib/prisma";
 import { DOMAIN_ACTIONS, previewDomainChange, commitDomainChange, type DomainAction } from "@/lib/domain-changes";
 import { billingWorkspace, renewBillingApproval, validateBillingPeriod, previewBillingPeriod, issueBillingPreview, previewStatementSend, sendStatementPreview } from "@/lib/billing-workflow";
-import { queuePropertyOriginals, retryDocumentArchive } from "@/lib/document-archive";
+import { queuePropertyOriginals, retryDocumentArchive, testDocumentStorage } from "@/lib/document-archive";
 import { testMicrosoftSource } from "@/lib/microsoft-import";
 import { documentDownload } from "@/lib/document-download";
 
@@ -32,6 +32,7 @@ export function POST(request: Request) {
       if (body.operation === "send") return jsonOk(await sendStatementPreview(String(body.previewId), body.confirmed === true, context));
       if (body.operation === "queue_originals") return jsonOk(await queuePropertyOriginals(String(body.propertyId)));
       if (body.operation === "retry_archive") return jsonOk(await retryDocumentArchive(String(body.documentId)));
+      if (body.operation === "test_storage") return jsonOk(await testDocumentStorage(String(body.propertyId)));
       if (body.operation === "test_source") return jsonOk(await testMicrosoftSource(String(body.sourceId)));
       if (body.operation === "download") return jsonOk(await documentDownload(String(body.documentId)));
       throw new Error("Unbekannte Fachaktion");

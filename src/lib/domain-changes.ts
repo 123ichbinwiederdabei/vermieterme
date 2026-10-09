@@ -5,6 +5,7 @@ import { dateValue, decimalString, integerCents, requiredString } from "@/lib/bi
 import { ALLOCATION_METHODS } from "@/lib/allocation-engine";
 import { serializeExact, prorateMonthlyCents } from "@/lib/billing-v2";
 import { archiveName } from "@/lib/document-paths";
+import { storageTestSettings } from "@/lib/archive-transport";
 
 export const DOMAIN_ACTIONS = ["create_property", "update_property", "create_unit", "change_unit_state", "create_tenancy", "update_tenant_contacts", "end_tenancy", "move_tenant", "add_lease_party", "end_lease_party", "set_financial_period", "set_allocation_rule", "create_cost_category", "set_period_category", "create_billing_period", "split_billing_period", "set_electricity_tariff", "create_electricity_contract", "create_electricity_meter", "record_electricity_reading", "record_heat_reading", "record_consumption_reading", "configure_heating_system", "select_active_tank", "configure_document_storage", "configure_microsoft_source", "update_landlord", "confirm_invoice_sample", "set_cost_agreement", "record_billing_evidence", "create_heat_meter", "end_meter_assignment", "create_heating_system", "create_oil_tank", "record_oil_stock", "set_oil_opening_balance", "revise_allocation_rule", "revise_financial_period", "correct_electricity_reading", "revise_billing_period", "set_property_tax_basis", "prepare_krandorf_transition"] as const;
 export type DomainAction = typeof DOMAIN_ACTIONS[number];
@@ -213,7 +214,7 @@ export async function executeDomainChange(db: Db, action: DomainAction, input: I
     const propertyId = text(input, "propertyId");
     const existing = await db.documentStorage.findUnique({ where: { propertyId } });
     const settings = { propertyId, driveId: text(input, "driveId"), rootItemId: text(input, "rootItemId"), objectFolder: archiveName(text(input, "objectFolder")) };
-    if (input.enabled === true && (!existing?.testedAt || existing.testedAt < new Date(Date.now() - 30 * 60_000) || existing.testedFingerprint !== recordHash(settings))) throw new Error("Ausgewahlte OneDrive-Ablage erst speichern und mit test_document_storage prufen");
+    if (input.enabled === true && (!existing?.testedAt || existing.testedAt < new Date(Date.now() - 30 * 60_000) || existing.testedFingerprint !== recordHash(storageTestSettings(settings)))) throw new Error("Ausgewahlte OneDrive-Ablage erst speichern und mit test_document_storage prufen");
     if (existing && existing.enabled && await db.documentArchive.count({ where: { storageId: existing.id } }) && (existing.driveId !== settings.driveId || existing.rootItemId !== settings.rootItemId || existing.objectFolder !== settings.objectFolder)) throw new Error("Archivziel nach erster Ablage unveranderlich; kontrollierte Archivmigration erforderlich");
     result = await db.documentStorage.upsert({ where: { propertyId }, create: { propertyId, driveId: text(input, "driveId"), rootItemId: text(input, "rootItemId"), objectFolder: archiveName(text(input, "objectFolder")), enabled: input.enabled === true }, update: { driveId: text(input, "driveId"), rootItemId: text(input, "rootItemId"), objectFolder: archiveName(text(input, "objectFolder")), enabled: input.enabled === true } });
   } else if (action === "configure_microsoft_source") {

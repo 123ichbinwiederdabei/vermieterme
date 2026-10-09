@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { processArchive, enqueueJob } from "@/lib/document-archive";
 import { runMicrosoftImport } from "@/lib/microsoft-import";
 import { MicrosoftGraph, MicrosoftGraphError } from "@/lib/microsoft-graph";
+import { RcloneArchiveError } from "@/lib/archive-transport";
 import { statementDocument, validateBillingPeriod } from "@/lib/billing-workflow";
 
 async function dispatchStatement(id: string, graph = new MicrosoftGraph()) {
@@ -49,7 +50,7 @@ export async function scheduleBackgroundJobs() {
   await enqueueJob("BILLING_NOTICES", `notices:${slot}`, {});
 }
 
-export async function processNextBackgroundJob(graph = new MicrosoftGraph()): Promise<boolean> {
+export async function processNextBackgroundJob(graph?: MicrosoftGraph): Promise<boolean> {
   const job = await prisma.backgroundJob.findFirst({ where: { OR: [{ status: "QUEUED", availableAt: { lte: new Date() } }, { status: "PROCESSING", leaseUntil: { lt: new Date() } }] }, orderBy: [{ availableAt: "asc" }, { id: "asc" }] });
   if (!job) return false;
   const leaseToken = randomUUID();
@@ -76,8 +77,9 @@ export async function processNextBackgroundJob(graph = new MicrosoftGraph()): Pr
     const pendingArchive = job.kind === "ARCHIVE" && (await prisma.documentArchive.findUnique({ where: { id: payload.archiveId } }))?.status !== "VERIFIED";
     await prisma.backgroundJob.updateMany({ where: { id: job.id, leaseToken }, data: { status: pendingArchive ? "QUEUED" : "DONE", leaseUntil: null, error: null } });
   } catch (error) {
-    const safe = error instanceof MicrosoftGraphError ? error.message : "Job requires review; inspect source, evidence or configuration";
-    const retry = error instanceof MicrosoftGraphError && (error.status === 429 || error.status >= 500) && job.attempts < 5 && job.kind !== "SEND_STATEMENT";
+    const safe = error instanceof MicrosoftGraphError || error instanceof RcloneArchiveError ? error.message : "Job requires review; inspect source, evidence or configuration";
+    const transient = error instanceof RcloneArchiveError ? error.retryable : error instanceof MicrosoftGraphError && (error.status === 429 || error.status >= 500);
+    const retry = transient && job.attempts < 5 && job.kind !== "SEND_STATEMENT";
     if (job.kind === "SEND_STATEMENT") await prisma.statementDispatch.updateMany({ where: { id: payload.dispatchId }, data: { error: safe } });
     if (job.kind === "ARCHIVE") await prisma.documentArchive.updateMany({ where: { id: payload.archiveId }, data: { status: "FAILED", error: safe } });
     if (job.kind === "MICROSOFT_IMPORT") {
