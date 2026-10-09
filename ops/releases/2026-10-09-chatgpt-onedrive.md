@@ -1,5 +1,7 @@
 # Produktive Deployment-Abnahme am 09.10.2026
 
+Aktueller Stand nach der rclone-Abnahme: Anwendung `a2e9fd3`, Image `img-captain-vermieterme:19-rclone-a2e9fd3`, beide Dienste healthy und 1/1. Die folgenden Abschnitte dokumentieren zunächst den ursprünglichen Stand 17; die abschließende rclone-Abnahme unten ist für den aktuellen Betrieb maßgeblich.
+
 Der Nutzer hat Backup, Migration und Web-/Worker-Deployment ausdrücklich bestätigt. Der freigegebene Anwendungscode wurde mit zwei notwendigen Buildkorrekturen aus `main` ausgeliefert: gemeinsame Docker-Abhängigkeitsschichten verhindern unnötige Kopien auf dem VPS; `.gitattributes` erzwingt LF für den Linux-Entrypoint. Die Änderungen sind committet und nach `origin/main` gepusht.
 
 ## Ausgelieferter Stand
@@ -53,3 +55,46 @@ Die vom Nutzer benannten lokalen Vertragsordner wurden geprüft. Alle zwölf Dat
 Die Runtime-Bindings sind in den Swarm-Service-Spezifikationen persistent. Die CapRover-Appdefinition wurde bei dieser Übernahme nicht geändert. Ein späteres CapRover-Deployment muss die freigegebenen Bindings aus der aktuellen Service-Spezifikation ausdrücklich erhalten bzw. über die authentifizierte CapRover-Konfiguration übernehmen, sonst kann es sie entfernen. Direkte Image-Updates beider Dienste müssen deren aktuelle Env-Bindings erhalten.
 
 Während der Prüfung war die VPS-Partition vorübergehend voll. Nachfolgend waren wieder etwa 3,5 GB verfügbar; diese Sitzung hat dafür keine fremden Ressourcen gelöscht. Web und Worker blieben erreichbar. Vollständige Cloud-/OCR-/Buchungs-/PDF-/Versand-Abnahme bleibt offen.
+
+## Abschließende produktive rclone-Abnahme
+
+Die ausdrücklich gewählte Archivumstellung wurde auf `main` implementiert, geprüft, committet und gepusht. Microsoft Graph bleibt für Mail und Import zuständig; zusätzliche Entra-Dateirechte wurden nicht erteilt. Beide Dienste verwenden die dedizierte private VermieterMe-rclone-Konfiguration, das unveränderte gemeinsame Datenvolume und alle bereits freigegebenen Microsoft-Runtime-Bindings.
+
+- Git-Revision der Anwendung: `a2e9fd3062981631c89cf5ba55b18f15fd351730`.
+- Image: `img-captain-vermieterme:19-rclone-a2e9fd3`.
+- Image-ID beider tatsächlich laufenden Container: `sha256:b8c4f04bff037392f4fe8f3ec28eecb5100c5b3f5f70eb7cfbf4115efc9a201d`.
+- Web und Worker: jeweils healthy, 1/1, keine Neustarts; öffentliche Health-Prüfung HTTP 200.
+- Private Releaseablage: `/var/backups/vermieterme/releases/20261009-rclone-object-a2e9fd3`. `online-backup/`, `cutover-backup/` und die zusätzliche `classification-backup/` enthalten jeweils 75 Tabellen, sechs Uploads und sechs referenzierte Originaldateien. SQLite-Integrität, Fremdschlüssel und isolierte Wiederherstellung der Uploads bestanden.
+- Alle 13 Migrationen sind angewendet. Es gibt keine neue Migration für den Archivtransport. Der Linux-Produktions-/Workerbuild und der Start mit isoliert wiederhergestellter Sicherung lieferten Health/Login HTTP 200.
+- Lokal mit Node 22 und gepinntem pnpm: 168 Tests in 32 Dateien, sechs Playwright-Prüfungen, TypeScript und Schema-/Migrationsparität bestanden; Lint ohne Fehler mit zwei bestehenden Hook-Warnungen.
+
+Die reale Prüfung deckte zwei rclone-Eigenheiten auf: ein Root-Stat kann ohne Cloudzugriff synthetisch erfolgreich sein, und direkte Datei-Wurzeln funktionieren mit diesem OneDrive-`root_folder_id` nicht zuverlässig. Die finale Implementierung prüft tatsächliche Cloud-Listings und benutzt `rc --loopback operations/stat|copyfile|movefile` mit getrenntem Root und literalem Objektpfad. Es läuft kein RC-Netzwerkserver. Die Konfiguration bleibt an genau einen Remote, Drive und Root gebunden; temporäre Kopien sind privat und werden aufgeräumt. Vollständiger Download, Größe und SHA-256 sind Pflicht. Ein realer technischer Upload-/Verschiebe-/Wiederholungsnachweis behielt dieselbe Cloud-Item-ID und erzeugte kein Duplikat.
+
+Ein unbeschränkter Zwischenbuild belastete RAM/Swap und machte VPS/HTTP vorübergehend unresponsive. Der eigene Build wurde beendet; der Host erholte sich. Der erfolgreiche finale Build lief mit zwei CPUs, 2 GiB RAM, 3 GiB RAM/Swap und 1 GiB Node-Heap. Sein sauberer Git-Quellkontext enthielt keine Sicherungen, Service-Spezifikationen oder Secrets. Die Linux-Produktionsabhängigkeiten des vorherigen Images wurden nur nach Prüfung unveränderter Lockfiles, Prisma-Schema und Runtime-Eingaben wiederverwendet. Fremde Apps, gemeinsame rclone-Integrationen und deren Konfiguration wurden nicht geändert. Bei der abschließenden Prüfung waren etwa 5,4 GB Plattenplatz verfügbar.
+
+### Echte Archivjobs und Originalerhaltung
+
+Die Speicheraktivierung lief über benutzergebundene Vorschauen: zuerst deaktivierte Konfiguration, tatsächliche lesende Cloudprüfung, dann die ausdrücklich freigegebene Aktivierung. Der separate produktive Worker verarbeitete den technischen PDF-Beleg und fünf bestehende Heizöloriginale. Alle sechs Archivjobs sind DONE, alle sechs Archivdatensätze VERIFIED. Die technische PDF ist als `billing_preview` gespeichert und wird nicht erneut als Rechnung importiert. Eine Wiederholung ihres Jobs behielt dieselbe Datei-ID, dieselben 2287 Bytes und den SHA-256; genau ein Originaldatensatz existiert.
+
+Die fünf Heizöl-PDFs wurden unabhängig gelesen und vollständig gerendert. Rechnungsdatum, Lieferant und Rechnungsnummer wurden direkt am Original geprüft. Ihre endgültigen Pfade verwenden das Rechnungsjahr:
+
+- 2025: ein Original unter `Krandorf/2025/Rechnungen/Heizkosten/Heizoel/`.
+- 2024: ein Original unter `Krandorf/2024/Rechnungen/Heizkosten/Heizoel/`.
+- 2023: ein Original unter `Krandorf/2023/Rechnungen/Heizkosten/Heizoel/`.
+- 2022: zwei Originale unter `Krandorf/2022/Rechnungen/Heizkosten/Heizoel/`.
+
+Die Originale wurden aus dem Eingang verschoben. Alle ursprünglichen Cloud-Item-IDs, Bytes und Hashes blieben erhalten; alte Dateinamen und lokale Beleg-IDs wurden nicht geändert. Die bestätigte Archivklassifizierung ist auditiert. Es wurden keine CostInvoice-Duplikate, neuen Heizölbuchungen oder FIFO-Verbräuche erzeugt. Ein Verschiebejob meldete zunächst einen rclone-Fehler; vor seinem manuellen Retry wurden die Cloud-Datei, Zielpfad, stabile Item-ID und SHA-256 erfolgreich abgeglichen. Danach erledigte der Worker denselben deduplizierten Job. Der Fehler wird nicht als automatisch bestandener Lauf dargestellt.
+
+Die abschließende private Prüfung `final-preservation.json` verglich 66 unveränderte Tabellen vollständig mit der Sicherung vor Stand 19, darunter Miet-/Finanzstammdaten, Heizöllieferungen, FIFO-Lots/-Verbräuche und alte BillingSnapshots. Alle sechs lokalen Uploadhashes und Originalmetadaten sind erhalten; ausschließlich verifizierter Hash und Objektzuordnung der alten Belege wurden ergänzt. Erwartete Änderungen betreffen Periodenteilung, Archiv-/Jobzustände, Vorschauen/Audits, Prüfhinweise und die normale MCP-Tokenrotation. Integrität/Fremdschlüssel sind fehlerfrei.
+
+### Periodenteilung, Connector und Browser
+
+Die offene Restperiode `billing-transition-rest-2026` wurde über die fachliche Vorschau/Commit-Aktion in 13.–30.09.2026 und 01.10.–31.12.2026 geteilt. Die alte ID bleibt mit SUPERSEDED erhalten. Neue IDs sind `cmv0xtkqq000277xy4aoezovx` und `cmv0xtkqr000477xy6ue5clnl`. Der zweite Commit derselben Vorschau gab das bereits gespeicherte Ergebnis zurück. Die historische Sonderperiode bleibt erhalten; drei aktive Zeiträume überlappen nicht. Strittige Oktober-Finanzwerte und Verteilungsregeln wurden nicht geändert.
+
+Der echte ChatGPT-Connector liest die aktivierte DocumentStorage-Konfiguration, die sechs VERIFIED-Archive und die sechs erledigten Archivjobs. Der angemeldete Webworkflow zeigt die neuen Zeiträume, aktivierte OneDrive-Ablage und die geprüften Jahrespfade. Die Prüfung der Oktoberperiode blockiert korrekt wegen fehlender aktiver Kostenarten und unvollständiger/veralteter Berechnungen. Es gibt weiterhin null produktive StatementRevision-Zeilen.
+
+### Verbleibende Voraussetzungen
+
+Die generelle Freigabe für Microsoft, Cloud-Schreiben, Krandorf und Echtversand liegt vor. Offen bleiben die verbindliche Auflösung der widersprüchlichen Oktober-Vertrags-/Regelfassungen, deren Nachweise, vollständige Kosten-/Messdaten, explizite Auswahl und Prüfung einer Importquelle sowie die separat zu autorisierenden Google-Vision-Runtime-Bindings. Der neue Fachwerkzeugkatalog muss im ChatGPT-Connector verfügbar sein; passende OAuth-Rechte sind gesondert erforderlich. Die konkrete technische Testmail mit benanntem Empfänger und vorliegender PDF-Vorschau wartet auf Text-/PDF-Bestätigung. Kein Echtversand wurde ausgelöst. Der vollständige reale Import → OCR → Buchung → zwei NKA-PDFs → Freigabe → R002-/R001-Erhaltung → Versand-Lauf steht weiterhin aus.
+
+Private Einzelbeleg-, Backup-, Deployment-, Transport-, Perioden- und Erhaltungsnachweise bleiben auf dem VPS bzw. im privaten Chat-Arbeitsbereich. Die Images 17, 18 und 19 sowie Sicherungen bleiben erhalten. Stand 18 enthält den inzwischen behobenen direkten rclone-Dateizugriffsfehler und ist deshalb kein funktionaler Archiv-Rollback. Für einen vollständigen Rollback beide Dienste anhalten und passende Datenbank/Uploads gemeinsam prüfen und wiederherstellen; keine Historie oder Originale zurücksetzen, ohne die inzwischen vorgenommenen Archiv-/Periodenänderungen abzugleichen.

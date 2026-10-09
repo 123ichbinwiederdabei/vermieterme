@@ -2,7 +2,7 @@
 
 ## Stand und Freigabegrenze
 
-Die Implementierung ist in `main` committet und gepusht. Nach ausdrücklicher Bestätigung wurden am 09.10.2026 Backup, Migration und Web-/Worker-Deployment abgeschlossen. Die lesende Abnahme über den echten ChatGPT-Connector und den angemeldeten Browser ist bestanden. Details und Rollbacknachweise stehen in [der Deployment-Abnahme](releases/2026-10-09-chatgpt-onedrive.md). Die vollständige Microsoft-Import-/Cloud-/Versandabnahme gehört zur separat bestätigten Einführung.
+Die Implementierung ist in `main` committet und gepusht. Nach ausdrücklicher Bestätigung wurden am 09.10.2026 Backup, Migration, Microsoft-Runtime-Aktivierung, rclone-Schreibaktivierung und Web-/Worker-Deployment abgeschlossen. Der aktuelle Anwendungscode ist `a2e9fd3`, beide Dienste verwenden `img-captain-vermieterme:19-rclone-a2e9fd3`. Sechs echte Archivjobs sind DONE/VERIFIED; der echte ChatGPT-Connector und der angemeldete Browser zeigen die geprüften Dateien. Details und Rollbacknachweise stehen in [der Deployment-Abnahme](releases/2026-10-09-chatgpt-onedrive.md). Der vollständige Import-/OCR-/Abrechnungs-/Versandlauf ist wegen der unten dokumentierten fachlichen und technischen Voraussetzungen weiterhin offen; die grundsätzliche Nutzerfreigabe liegt vor.
 
 Web und Worker verwenden dasselbe Image und Datenvolume. Microsoft-Mail-Zugangsdaten wurden nach ausdrücklicher Freigabe serverseitig übernommen; Tokenbezug und Zugriff auf das ausgewählte Postfach sind geprüft. Microsoft Graph bleibt für Mail zuständig. Die App besitzt keine OneDrive-Dateirechte; diese werden für die Archivierung nicht erweitert.
 
@@ -10,7 +10,7 @@ Der Nutzer hat rclone für die OneDrive-Archivierung gewählt. Der Windows-Synch
 
 - Drive-ID: `b!lNKDCX71D0ihHVxiDQFcMex82vha131CiKr2ahQ4z4BDA2ikM6J4SLAiPT8Lvbuk`
 - Root-Item-ID für `VermieterMe`: `01342T7C5PC7DT735KRZAZIBB645KOHBX5`
-- Dedizierter Remote: `VermieterMe-Archive`, ausschließlich auf diesen Root gebunden. Ein technischer PDF-Upload unter `_Abnahme_2026-10-09` wurde vollständig heruntergeladen und mit SHA-256 geprüft. Er ersetzt noch keinen Fachjob oder vollständigen Abrechnungslauf.
+- Dedizierter Remote: `VermieterMe-Archive`, ausschließlich auf diesen Root gebunden. Der technische PDF-Upload unter `_Abnahme_2026-10-09` wurde anschließend durch den persistenten Facharchivjob verifiziert und ohne Duplikat wiederholt. Fünf bestehende Heizöloriginale wurden unabhängig gelesen und visuell geprüft, erst im Eingang archiviert und dann nach ihrem gedruckten Rechnungsdatum unter `Krandorf/2022` bis `Krandorf/2025/Rechnungen/Heizkosten/Heizoel` eingeordnet. Cloud-Item-IDs, Originalbytes und SHA-256 blieben bei den Verschiebungen erhalten. Es entstanden keine neuen Rechnungsbuchungen oder FIFO-Verbräuche. Diese Archivabnahme ersetzt keinen vollständigen Abrechnungslauf.
 
 ## rclone-Runtime
 
@@ -68,6 +68,8 @@ Vereinbarte Betriebs-/Heizkostenvorauszahlungen werden gemeinsam einmal angerech
 
 `prepare_krandorf_transition` bereitet ab 01.10.2026 atomar Wasser nach 80/390, 200/390, 110/390 und Müll/Kleinkläranlage/Stromgrundpreis zu gleichen Dritteln vor. Es verlangt eindeutig passende Einheiten, einen Regelschlüssel-Nachweis und je Mietverhältnis einen Vertragsnachweis. Isabella erhält 288/187/41 Euro, Vladimir 360/410/90 Euro; frühere offene Finanzzeilen werden zum 30.09. geschlossen. Optional wird der noch nicht ausgestellte Restzeitraum am 01.10. geteilt. Vorhandene kollidierende Oktober-Regeln werden nicht überschrieben, sondern müssen ausdrücklich revidiert werden.
 
+Produktiv wurde ausschließlich die ausdrücklich freigegebene Periodenteilung durchgeführt: die bisherige Restperiode ist SUPERSEDED, neue offene Zeiträume sind 13.–30.09.2026 und 01.10.–31.12.2026. Die Vorschau war benutzergebunden; ein erneuter Commit lieferte dasselbe Ergebnis. Historische Sonderperiode, alte Snapshots, Vertragswerte und Verbrauchsledger bleiben erhalten. Die Finanzumstellung und Oktober-Regeln wurden nicht angewendet, weil die geprüften Nachtragsentwürfe vom Plan abweichen und unterzeichnete Nachweise fehlen. Die Oktoberprüfung meldet fehlende aktive Kostenarten sowie fehlende vollständige Berechnungen und gibt keine Abrechnung frei.
+
 Grundsteuer wird separat mit belegtem Mietwohnanteil bestätigt. Historische Sonderzeiträume verlangen einen eigenen Nachweis; aktive überlappende Zeiträume werden abgewiesen. Unbekannte historische Flächen-/Nutzungsgültigkeit wird nicht erfunden.
 
 ## Microsoft-Einführung nach gesonderter Bestätigung
@@ -92,6 +94,8 @@ Prüfprobleme werden als eindeutige Notices gespeichert; unveränderte Probleme 
 
 Lokale Prüfungen mit Node 22 und dem gepinnten pnpm: `corepack pnpm test`, `corepack pnpm lint`, `corepack pnpm exec tsc --noEmit`, `corepack pnpm exec prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --exit-code`, `corepack pnpm build:worker`, `corepack pnpm test:e2e`. Playwright baut die Produktionsanwendung und setzt ausschließlich `prisma/e2e.db` zurück. Graph-Fehler und Versand sind lokal simuliert; die Browserprüfung simuliert Cloud-Verifikationsantworten, während Integrationstests die echte Upload-/Move-/Outbox-Implementierung gegen einen kontrollierten Graph-Transport ausführen.
 
-DOCX und Google-Connectoren sind zurückgestellt. Die vorhandene OCR nutzt weiterhin Google Vision über bereits konfigurierte Runtime-Secrets.
+DOCX und Google-Connectoren sind zurückgestellt. Die vorhandene OCR benötigt Google Vision und separat eingerichtete Runtime-Secrets.
+
+Im produktiven VermieterMe fehlen derzeit die Google-Vision-Bindings; deren Übernahme ist durch die Microsoft-Freigabe nicht automatisch autorisiert. Keine Mail-/Drive-Importquelle ist aktiviert. Eine konkrete Quelle muss ausgewählt und getestet werden. Graph-Mail-Zugriff ist geprüft, ein echter Testversand ist noch nicht erfolgt: der benannte Testempfänger steht fest, die konkrete Text-/PDF-Vorschau wartet auf Bestätigung. Der derzeitige ChatGPT-Connector hat noch den älteren Werkzeugkatalog; die neuen fachlichen Schreib-/Freigabeaktionen benötigen dessen Aktualisierung und ausdrücklich passende OAuth-Scopes. Produktive R001/R002-Abrechnungen wurden nicht erzeugt.
 
 Lokales Abnahmeergebnis am 09.10.2026: 32 Testdateien mit 168 erfolgreichen Tests, sechs erfolgreiche Playwright-Prüfungen inklusive Produktions- und Workerbuild, TypeScript ohne Fehler und Schema-/Migrationsparität ohne Differenz. Lint hat keine Fehler und zwei bereits vorhandene Hook-Warnungen. Beide erzeugten Testabrechnungen wurden vollständig gerendert und auf Seitenumbrüche, Vorzeichen und Lesbarkeit geprüft. Der Korrekturlauf erhält die R001-Bytes und -Hashes unverändert. Diese lokale Abnahme ersetzt nicht den noch ausstehenden realen ChatGPT-/Microsoft-Lauf.
