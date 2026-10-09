@@ -10,9 +10,8 @@ COPY prisma ./prisma
 RUN pnpm install --frozen-lockfile
 
 # --- Build ---
-FROM base AS builder
+FROM deps AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV AUTH_SECRET="build-placeholder"
@@ -22,10 +21,10 @@ RUN pnpm build && pnpm build:worker
 FROM base AS runtime-deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml .npmrc ./
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts --store-dir=/tmp/pnpm-store && rm -rf /tmp/pnpm-store
 
 # --- Production ---
-FROM base AS runner
+FROM runtime-deps AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -41,7 +40,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # Keep native Google SDK data files and PDF worker available at runtime.
-COPY --from=runtime-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # Copy Prisma schema + runtime client
