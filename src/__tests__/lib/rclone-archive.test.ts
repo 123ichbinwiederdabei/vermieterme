@@ -94,3 +94,8 @@ it("accepts rclone synthetic root stats without inventing a remote item ID", asy
   const s = new RcloneArchiveTransport(async args => args[0] === "lsjson" && args[1] === "VermieterMe-Archive:" && args.includes("--stat") ? Buffer.from('{"IsDir":true,"Name":""}') : execute(args), config);
   expect(await s.request("drives/drive/items/root")).toMatchObject({ id: "root", folder: {} });
 });
+
+it("requires an actual cloud listing even when root metadata is synthetic", async () => {
+  const s = new RcloneArchiveTransport(async args => args.includes("--stat") ? Buffer.from('{"IsDir":true}') : Promise.reject(new Error("cloud permission denied")), config);
+  await expect(s.request("drives/drive/items/root")).rejects.toThrow("cloud permission denied");
+});

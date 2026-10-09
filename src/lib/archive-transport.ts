@@ -85,8 +85,9 @@ export class RcloneArchiveTransport implements ArchiveTransport {
     await this.assertConfig();
     const item = await this.stat("");
     if (!item.IsDir || (item.ID && this.id(item) !== process.env.RCLONE_ARCHIVE_ROOT_ID)) throw new Error("rclone remote is not rooted at the selected OneDrive folder");
-    if (endpoint === expected) return { id: process.env.RCLONE_ARCHIVE_ROOT_ID, name: item.Name || process.env.RCLONE_ARCHIVE_FOLDER_PATH || this.remote, folder: {} };
+    // Root --stat can be synthetic: listing children must actually reach OneDrive.
     const children: Item[] = JSON.parse((await this.call(["lsjson", this.location(""), "--max-depth", "1"])).toString());
+    if (endpoint === expected) return { id: process.env.RCLONE_ARCHIVE_ROOT_ID, name: item.Name || process.env.RCLONE_ARCHIVE_FOLDER_PATH || this.remote, folder: {} };
     return { value: children.map(i => ({ id: this.id(i), name: i.Name, size: i.Size, ...(i.IsDir ? { folder: {} } : { file: {} }) })) };
   }
   async uploadImmutable(drive: string, root: string, relative: string, bytes: Buffer) {
