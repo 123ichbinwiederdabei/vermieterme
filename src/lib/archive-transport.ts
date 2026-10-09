@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { MicrosoftGraph } from "@/lib/microsoft-graph";
@@ -66,14 +66,33 @@ export class RcloneArchiveTransport implements ArchiveTransport {
     const config = sections.get(this.remote);
     if (sections.size !== 1 || config?.type !== "onedrive" || config.drive_id !== process.env.RCLONE_ARCHIVE_DRIVE_ID || config.root_folder_id !== process.env.RCLONE_ARCHIVE_ROOT_ID) throw new Error("rclone configuration differs from the scoped runtime target");
   }
+  private async operation(name: "stat" | "copyfile" | "movefile", values: Record<string, string>) {
+    return JSON.parse((await this.call(["rc", `operations/${name}`, "--loopback", ...Object.entries(values).map(([key, value]) => `${key}=${value}`), '_config={"Immutable":true,"CheckSum":true}'])).toString());
+  }
   private async stat(relative: string): Promise<Item> {
-    return JSON.parse((await this.call(["lsjson", this.location(relative), "--stat"])).toString());
+    if (!relative) return JSON.parse((await this.call(["lsjson", this.location(""), "--stat"])).toString());
+    const result = await this.operation("stat", { fs: this.location(""), remote: relative });
+    if (!result.item) throw new Error("Archived OneDrive item is missing");
+    return result.item;
+  }
+  private async download(relative: string): Promise<Buffer> {
+    this.location(relative);
+    const item = await this.stat(relative);
+    if (item.IsDir || typeof item.Size !== "number" || item.Size <= 0 || item.Size > 10 * 1024 * 1024) throw new Error("Unsupported archived object size");
+    const dir = await mkdtemp(path.join(tmpdir(), "vermieterme-rclone-read-"));
+    try {
+      // Pass a literal object path inside the rooted FS. Direct file-root CLI
+      // commands do not work reliably with OneDrive root_folder_id.
+      await this.operation("copyfile", { srcFs: this.location(""), srcRemote: relative, dstFs: dir, dstRemote: "original" });
+      await chmod(path.join(dir, "original"), 0o600);
+      return await readFile(path.join(dir, "original"));
+    } finally { await rm(dir, { recursive: true, force: true }); }
   }
   private async list(): Promise<Item[]> {
     return JSON.parse((await this.call(["lsjson", this.location(""), "--recursive", "--files-only", "--no-mimetype", "--no-modtime"])).toString());
   }
   private async verify(relative: string, bytes: Buffer) {
-    const actual = await this.call(["cat", this.location(relative)]);
+    const actual = await this.download(relative);
     if (actual.length !== bytes.length || createHash("sha256").update(actual).digest("hex") !== createHash("sha256").update(bytes).digest("hex")) throw new Error("Archived original size or SHA-256 mismatch");
     const item = await this.stat(relative);
     if (item.IsDir || item.Size !== bytes.length) throw new Error("Archived original metadata mismatch");
@@ -100,7 +119,7 @@ export class RcloneArchiveTransport implements ArchiveTransport {
     const dir = await mkdtemp(path.join(tmpdir(), "vermieterme-rclone-"));
     try {
       const source = path.join(dir, "original"); await writeFile(source, bytes, { mode: 0o600, flag: "wx" });
-      await this.call(["copyto", source, this.location(relative), "--immutable", "--checksum"]);
+      await this.operation("copyfile", { srcFs: dir, srcRemote: "original", dstFs: this.location(""), dstRemote: relative });
       return await this.verify(relative, bytes);
     } finally { await rm(dir, { recursive: true, force: true }); }
   }
@@ -111,11 +130,11 @@ export class RcloneArchiveTransport implements ArchiveTransport {
     const items = await this.list();
     const original = items.find(i => this.id(i) === itemId);
     if (!original?.Path) throw new Error("Archived OneDrive item is missing from the selected root");
-    const bytes = await this.call(["cat", this.location(original.Path)]);
+    const bytes = await this.download(original.Path);
     if (createHash("sha256").update(bytes).digest("hex") !== sha256) throw new Error("Archived original hash mismatch");
     const occupied = items.find(i => i.Path === relative);
     if (occupied && this.id(occupied) !== itemId) throw new Error("Final archive path is occupied by another item");
-    if (original.Path !== relative) await this.call(["moveto", this.location(original.Path), this.location(relative), "--immutable", "--checksum"]);
+    if (original.Path !== relative) await this.operation("movefile", { srcFs: this.location(""), srcRemote: original.Path, dstFs: this.location(""), dstRemote: relative });
     const actualId = await this.verify(relative, bytes);
     if (actualId !== itemId) throw new Error("Archive move changed the original item identifier");
     return actualId;

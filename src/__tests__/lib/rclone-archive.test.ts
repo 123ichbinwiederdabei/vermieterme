@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { RcloneArchiveTransport, storageTestSettings, archiveBackend } from "@/lib/archive-transport";
 
 const hash = (b: Buffer) => createHash("sha256").update(b).digest("hex");
@@ -11,7 +12,7 @@ const config = async () => "[VermieterMe-Archive]\ntype = onedrive\ndrive_id = d
 const strip = (s: string) => s.replace(/^VermieterMe-Archive:/, "");
 async function execute(args: string[]) {
   calls.push(args);
-  const [command, first, second] = args;
+  const [command, first] = args;
   if (command === "lsjson") {
     if (args.includes("--stat")) {
       if (!strip(first)) return Buffer.from(JSON.stringify({ ID: `drive#${rootId}`, IsDir: true, Name: "VermieterMe" }));
@@ -20,17 +21,29 @@ async function execute(args: string[]) {
     }
     return Buffer.from(JSON.stringify([...files.entries()].map(([Path, f]) => ({ ID: `drive#${f.id}`, Path, Name: Path.split("/").at(-1), IsDir: false, Size: f.bytes.length }))));
   }
-  if (command === "cat") return Buffer.from(files.get(strip(first))!.bytes);
-  if (command === "copyto") {
-    expect(args).toContain("--immutable"); expect(args).toContain("--checksum");
-    const bytes = await readFile(first); const dest = strip(second);
-    if (files.has(dest)) throw new Error("immutable conflict");
-    files.set(dest, { id: `item-${files.size}`, bytes }); return Buffer.alloc(0);
-  }
-  if (command === "moveto") {
-    expect(args).toContain("--immutable"); const source = strip(first), target = strip(second);
-    if (files.has(target)) throw new Error("occupied");
-    files.set(target, files.get(source)!); files.delete(source); return Buffer.alloc(0);
+  if (command === "rc") {
+    expect(args).toContain("--loopback");
+    expect(args).toContain('_config={"Immutable":true,"CheckSum":true}');
+    const params = Object.fromEntries(args.filter(a => a.includes("=")).map(a => [a.slice(0, a.indexOf("=")), a.slice(a.indexOf("=") + 1)]));
+    if (first === "operations/stat") {
+      expect(params.fs).toBe("VermieterMe-Archive:");
+      const f = files.get(params.remote)!;
+      return Buffer.from(JSON.stringify({ item: { ID: `drive#${f.id}`, IsDir: false, Size: f.bytes.length } }));
+    }
+    if (first === "operations/copyfile") {
+      if (params.srcFs === "VermieterMe-Archive:") await writeFile(path.join(params.dstFs, params.dstRemote), files.get(params.srcRemote)!.bytes);
+      else {
+        expect(params.dstFs).toBe("VermieterMe-Archive:");
+        if (files.has(params.dstRemote)) throw new Error("immutable conflict");
+        files.set(params.dstRemote, { id: `item-${files.size}`, bytes: await readFile(path.join(params.srcFs, params.srcRemote)) });
+      }
+      return Buffer.from("{}");
+    }
+    if (first === "operations/movefile") {
+      expect(params.srcFs).toBe("VermieterMe-Archive:"); expect(params.dstFs).toBe(params.srcFs);
+      if (files.has(params.dstRemote)) throw new Error("occupied");
+      files.set(params.dstRemote, files.get(params.srcRemote)!); files.delete(params.srcRemote); return Buffer.from("{}");
+    }
   }
   throw new Error("Unexpected command");
 }
@@ -43,7 +56,7 @@ it("uploads immutable bytes, verifies SHA-256 and retries without a second file"
   const storage = new RcloneArchiveTransport(execute, config); const bytes = Buffer.from("original");
   expect(await storage.uploadImmutable("drive", "root", "Krandorf/2026/Rechnungen/Wasser/original.pdf", bytes)).toBe("item-0");
   expect(await storage.uploadImmutable("drive", "root", "Krandorf/2026/Rechnungen/Wasser/original.pdf", bytes)).toBe("item-0");
-  expect(calls.filter(a => a[0] === "copyto")).toHaveLength(1);
+  expect(calls.filter(a => a[1] === "operations/copyfile" && a.includes("dstFs=VermieterMe-Archive:"))).toHaveLength(1);
   await expect(storage.uploadImmutable("drive", "root", "Krandorf/2026/Rechnungen/Wasser/original.pdf", Buffer.from("changed!"))).rejects.toThrow("SHA-256");
   expect(files.get("Krandorf/2026/Rechnungen/Wasser/original.pdf")?.bytes).toEqual(bytes);
 });
@@ -69,10 +82,16 @@ it("blocks stale or misbound roots before mutation and rejects path escapes", as
   await expect(s.uploadImmutable("drive", "root", "folder\\outside.pdf", Buffer.from("x"))).rejects.toThrow("path");
   rootId = "other-root";
   await expect(s.uploadImmutable("drive", "root", "invoice.pdf", Buffer.from("x"))).rejects.toThrow("rooted");
-  expect(calls.some(a => ["copyto", "moveto"].includes(a[0]))).toBe(false);
+  expect(calls.some(a => a[1] === "operations/movefile" || (a[1] === "operations/copyfile" && a.includes("dstFs=VermieterMe-Archive:")))).toBe(false);
 });
 it("fails readback corruption and never marks a partial upload verified", async () => {
-  const s = new RcloneArchiveTransport(async args => args[0] === "cat" ? Buffer.from("corrupt") : execute(args), config);
+  const s = new RcloneArchiveTransport(async args => {
+    if (args[1] === "operations/copyfile" && args.includes("srcFs=VermieterMe-Archive:")) {
+      const dir = args.find(a => a.startsWith("dstFs="))!.slice(6);
+      await writeFile(path.join(dir, "original"), Buffer.from("corrupt")); return Buffer.from("{}");
+    }
+    return execute(args);
+  }, config);
   await expect(s.uploadImmutable("drive", "root", "invoice.pdf", Buffer.from("original"))).rejects.toThrow("SHA-256");
 });
 it("binds activation checks to the runtime transport and exact root", () => {
@@ -98,4 +117,13 @@ it("accepts rclone synthetic root stats without inventing a remote item ID", asy
 it("requires an actual cloud listing even when root metadata is synthetic", async () => {
   const s = new RcloneArchiveTransport(async args => args.includes("--stat") ? Buffer.from('{"IsDir":true}') : Promise.reject(new Error("cloud permission denied")), config);
   await expect(s.request("drives/drive/items/root")).rejects.toThrow("cloud permission denied");
+});
+
+it("uses literal rooted object paths for filenames with filter metacharacters", async () => {
+  const s = new RcloneArchiveTransport(execute, config), bytes = Buffer.from("literal filename");
+  const relative = "folder/invoice[1]{2}*.pdf";
+  await s.uploadImmutable("drive", "root", relative, bytes);
+  expect(calls.some(a => a.includes(`srcRemote=${relative}`))).toBe(true);
+  expect(calls.some(a => a.includes("--include"))).toBe(false);
+  expect(files.get(relative)?.bytes).toEqual(bytes);
 });
