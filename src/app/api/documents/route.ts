@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { DOCX_MIME, originalExtension } from "@/lib/document-types";
 import {
   apiHandler,
   requireAuth,
@@ -16,6 +17,7 @@ const ALLOWED_TYPES = [
   "image/jpeg",
   "image/png",
   "image/webp",
+  DOCX_MIME,
 ];
 
 export function GET(request: NextRequest) {
@@ -65,9 +67,9 @@ export function POST(request: NextRequest) {
       throw new ApiError("Keine Datei hochgeladen", 400);
     }
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    if (!ALLOWED_TYPES.includes(file.type) || !originalExtension(file.type, category)) {
       throw new ApiError(
-        "Dateityp nicht erlaubt. Erlaubt: PDF, JPEG, PNG, WebP",
+        "Dateityp nicht erlaubt. Erlaubt: PDF, JPEG, PNG, WebP; DOCX nur als Vertrags-/Stammdatennachweis",
         400,
       );
     }

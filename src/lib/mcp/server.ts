@@ -299,7 +299,7 @@ export function createVermieterMeMcpServer(identity: McpRequestIdentity, request
   const openAiFile = z.object({ download_url: z.string().url(), file_id: z.string(), mime_type: z.string().optional(), file_name: z.string().optional() }).strict();
   register("upload_document", {
     title: "Upload a VermieterMe document",
-    description: "Persist a ChatGPT-provided PDF or image and optionally associate it with a tenant, billing period, oil delivery, or cost invoice.",
+    description: "Persist a ChatGPT-provided PDF or image, or an unchanged DOCX contract with metadata.category=contract/lease/stammdaten. Optionally associate it with a tenant, billing period, oil delivery, or cost invoice.",
     inputSchema: { file: openAiFile, metadata: valuesSchema.default({}), reason: z.string().min(3) },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     _meta: { "openai/fileParams": ["file"], securitySchemes: [{ type: "oauth2", scopes: ["vermieterme:write"] }] },

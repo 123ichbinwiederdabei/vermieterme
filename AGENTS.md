@@ -24,6 +24,8 @@
 ## ChatGPT, Microsoft and document archives
 
 - Use `domain-changes`, `billing-workflow`, `configured-allocation` and `document-intake` for Web/MCP business actions. Short-lived previews are bound to the user and input fingerprint; retries must reuse consumed results.
+- When the user selects the latest contract versions as the source for conflicting values, use their explicit effective dates and preserve their actual signature status. Prefer the individual source-backed financial/rule actions over `prepare_krandorf_transition` when those contracts differ from its original plan values. Never treat an unsigned source as signed or invent missing meter/inventory evidence.
+- Preserve DOCX contract/lease/master-data originals through the shared intake/archive modules; they remain opaque original bytes and must not enter invoice OCR or oil-delivery booking. PDF remains the required statement output.
 - Keep OAuth read, write, approve and admin scopes separate. Missing rights require an explicit new consent. Generic CRUD must not mutate billing history, audits, inventory consumption, originals or business master data.
 - Archive invoices by invoice date, independently of their service and billing periods. Identify original bytes with SHA-256; never overwrite released PDFs or copy invoices into each statement directory.
 - OneDrive server targets use Graph drive/root IDs. Read the cloud contents first; explain the exact live scope and get confirmation before deployment, runtime-secret changes, import activation, OneDrive writes, or productive Krandorf changes.

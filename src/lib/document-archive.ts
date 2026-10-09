@@ -7,22 +7,23 @@ import { categoryCode } from "@/lib/invoice-categories";
 import { recordHash } from "@/lib/mcp/entities";
 import { MicrosoftGraph } from "@/lib/microsoft-graph";
 import { archiveTransport, archiveBackend, storageTestSettings, type ArchiveTransport } from "@/lib/archive-transport";
+import { originalExtension } from "@/lib/document-types";
 
-const extensions: Record<string, string> = { "application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "message/rfc822": ".eml" };
 export const uploadsDirectory = () => path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), "data", "uploads"));
 export function documentFile(fileName: string) {
   if (path.basename(fileName) !== fileName || /[\\/]/.test(fileName)) throw new Error("Invalid stored document filename");
   return path.join(uploadsDirectory(), fileName);
 }
 export async function persistOriginal(bytes: Buffer, mimeType: string, originalName: string, propertyId: string, category = "invoice") {
-  if (!extensions[mimeType] || !bytes.length || bytes.length > 10 * 1024 * 1024) throw new Error("Unsupported or oversized original document");
+  const extension = originalExtension(mimeType, category);
+  if (!extension || !bytes.length || bytes.length > 10 * 1024 * 1024) throw new Error("Unsupported or oversized original document");
   const fileHash = createHash("sha256").update(bytes).digest("hex");
   const existing = await prisma.document.findFirst({ where: { fileHash } });
   if (existing) {
     if (existing.propertyId && existing.propertyId !== propertyId) throw new Error("Identical document belongs to another property");
     return existing;
   }
-  const fileName = `${randomUUID()}${extensions[mimeType]}`;
+  const fileName = `${randomUUID()}${extension}`;
   await mkdir(uploadsDirectory(), { recursive: true });
   await writeFile(documentFile(fileName), bytes, { flag: "wx" });
   try {

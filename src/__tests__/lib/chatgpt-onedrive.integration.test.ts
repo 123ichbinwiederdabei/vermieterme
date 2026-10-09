@@ -21,6 +21,9 @@ import { processNextBackgroundJob, scheduleBackgroundJobs } from "@/lib/backgrou
 import { buildTenantStatement } from "@/lib/billing-statement";
 import { configuredAllocation } from "@/lib/configured-allocation";
 import { documentDownload, downloadedDocument } from "@/lib/document-download";
+import { intakeDocument } from "@/lib/document-intake";
+import { DOCX_MIME } from "@/lib/document-types";
+import { buildEnergyPreview } from "@/lib/energy-preview";
 import type { OcrDocument, TemplateRules } from "@/lib/invoice-extraction";
 
 let folder: string;
@@ -236,4 +239,50 @@ it("imports paginated mailbox attachments once and excludes own billing exports"
   expect(new Set(imported.map((item) => item.invoiceId)).size).toBe(1);
   expect(await state.db.invoiceExtractionJob.count({ where: { invoiceId: imported[0].invoiceId! } })).toBe(1);
   expect(await state.db.document.count({ where: { originalName: "NKA_2026_R001.pdf" } })).toBe(0);
+});
+
+it("retains and deduplicates DOCX contract originals, archives their exact bytes and links dated financial evidence", async () => {
+  const bytes = Buffer.from("PK\u0003\u0004opaque-contract-original");
+  const invoicesBefore = await state.db.costInvoice.count();
+  const document = await intakeDocument(bytes, DOCX_MIME, "Latest contract.docx", { propertyId: fixture.property.id, tenantId: fixture.tenants[0].id, category: "contract" }, audit);
+  const duplicate = await intakeDocument(bytes, DOCX_MIME, "Renamed copy.docx", { propertyId: fixture.property.id, category: "contract" }, audit);
+  expect(duplicate.id).toBe(document.id);
+  expect(document.originalName).toBe("Latest contract.docx");
+  expect(document.fileName).toMatch(/\.docx$/);
+  expect(document.fileHash).toBe(hash(bytes));
+  expect(await readFile(documentFile(document.fileName))).toEqual(bytes);
+  expect(await state.db.costInvoice.count()).toBe(invoicesBefore);
+  const archive = await state.db.documentArchive.findUniqueOrThrow({ where: { documentId: document.id } });
+  expect(archive.relativePath).toContain("/Vertraege_und_Stammdaten/");
+  const cloud = new Cloud();
+  await processArchive(archive.id, cloud);
+  expect(cloud.files.values().next().value!.bytes).toEqual(bytes);
+  const preview = await previewDomainChange("set_financial_period", { tenantId: fixture.tenants[0].id, validFrom: "2027-01-01", sourceDocumentId: document.id, monthlyColdRentCents: "28800", monthlyGeneralOperatingAndHeatingPrepaymentCents: "17500", monthlyElectricityPrepaymentCents: "4100" }, audit);
+  expect(preview.financialImpact).toMatchObject({ newMonthlyTotalCents: "50400" });
+  const committed = await commitDomainChange(preview.previewId, true, audit);
+  expect(await commitDomainChange(preview.previewId, true, audit)).toEqual(committed);
+  expect(await state.db.leaseFinancialPeriod.count({ where: { sourceDocumentId: document.id } })).toBe(1);
+});
+it("rejects DOCX invoice imports before persisting or queuing an original", async () => {
+  const before = await state.db.document.count();
+  await expect(intakeDocument(Buffer.from("PK\u0003\u0004unreviewed-invoice"), DOCX_MIME, "invoice.docx", { propertyId: fixture.property.id }, audit)).rejects.toThrow("Unsupported");
+  await expect(intakeDocument(Buffer.from("PK\u0003\u0004unreviewed-invoice"), DOCX_MIME, "invoice.docx", { propertyId: fixture.property.id, category: "contract", costInvoiceId: "any-invoice" }, audit)).rejects.toThrow("cannot be imported as an invoice");
+  expect(await state.db.document.count()).toBe(before);
+});
+it("uses dated contract-backed consumption rules for electricity base prices and blocks missing meter evidence", async () => {
+  const f = await createKrandorfFixture(state.db, "contract-base-consumption");
+  await state.db.electricityContract.update({ where: { id: f.contract.id }, data: { basePriceAgreementNote: null } });
+  const rule = await state.db.propertyCostAllocationRule.findFirstOrThrow({ where: { propertyId: f.property.id, costCategoryId: f.categories.ELECTRICITY, purpose: "BASE" } });
+  await state.db.propertyCostAllocationRule.update({ where: { id: rule.id }, data: { allocationMethod: "DIRECT_CONSUMPTION" } });
+  await state.db.propertyCostAllocationRuleUnit.updateMany({ where: { ruleId: rule.id, unitId: f.units[2].id }, data: { included: false } });
+  const preview = await buildEnergyPreview("ELECTRICITY", f.period.id, f.categories.ELECTRICITY);
+  expect(preview.blockers).toEqual([]);
+  const base = preview.allocations.filter((a) => (a as { allocationRuleId?: string }).allocationRuleId === rule.id);
+  expect(base.filter((a) => a.tenantId === f.tenants[0].id).reduce((sum,a) => sum + BigInt(a.amountCents),0n)).toBe(1000n);
+  expect(base.filter((a) => a.tenantId === f.tenants[1].id).reduce((sum,a) => sum + BigInt(a.amountCents),0n)).toBe(2000n);
+  const meter = await state.db.electricityMeter.findFirstOrThrow({ where: { contractId: f.contract.id, unitId: f.units[0].id } });
+  await state.db.electricityReading.deleteMany({ where: { meterId: meter.id, readingDate: f.period.endDate } });
+  const missing = await buildEnergyPreview("ELECTRICITY", f.period.id, f.categories.ELECTRICITY);
+  expect(missing.blockers.join(" ")).toMatch(/Ablesung|Messwert|Zählerstand/);
+  expect(missing.allocations.filter((a) => (a as { allocationRuleId?: string }).allocationRuleId === rule.id)).toEqual([]);
 });

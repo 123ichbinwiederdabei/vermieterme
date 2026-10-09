@@ -12,6 +12,7 @@ import { templateHash } from "@/lib/invoice-template-hash";
 import { allocateServiceLineToPeriod } from "@/lib/cost-invoice";
 import { generateAccessCode } from "@/lib/token";
 import { recordLifecycleAudit, sanitizeRecord } from "./entities";
+import { DOCX_MIME, originalExtension } from "@/lib/document-types";
 
 type AuditContext = { userId: string; requestId: string; reason: string };
 
@@ -389,7 +390,7 @@ export async function manageCredential(kind: "tenant_access" | "session" | "acco
   return { success: true };
 }
 
-const ALLOWED_UPLOAD_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+const ALLOWED_UPLOAD_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", DOCX_MIME]);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 function isPrivateAddress(address: string) {
@@ -428,7 +429,7 @@ export async function uploadDocument(file: { download_url: string; file_id: stri
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`File download failed (${response.status})`);
   const mimeType = file.mime_type || response.headers.get("content-type")?.split(";")[0] || "";
-  if (!ALLOWED_UPLOAD_TYPES.has(mimeType)) throw new Error("Allowed file types: PDF, JPEG, PNG, WebP");
+  if (!ALLOWED_UPLOAD_TYPES.has(mimeType) || !originalExtension(mimeType, String(metadata.category || "invoice"))) throw new Error("Allowed file types: PDF, JPEG, PNG, WebP; DOCX only as contract/lease/master-data evidence");
   const declaredLength = Number(response.headers.get("content-length") || 0);
   if (declaredLength > MAX_UPLOAD_BYTES) throw new Error("File exceeds 10 MB");
   const bytes = Buffer.from(await response.arrayBuffer());

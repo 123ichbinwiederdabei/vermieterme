@@ -8,7 +8,7 @@ export type AllocationCharge = { amountCents: bigint; start: Date; end: Date };
 type RawUnit = { id: string; name: string; areaM2: { toString(): string } | null; shares?: number; ownerOccupied: boolean; tenants: AllocationUnit["tenants"] };
 const day = 86_400_000;
 
-export async function configuredAllocation(input: { propertyId: string; categoryId: string; units: RawUnit[]; start: Date; end: Date; amountCents: bigint; purpose?: string; sourceType: string; charges?: AllocationCharge[]; legacyMethod?: "AREA" | "FIXED_SHARES"; consumptionWeights?: Record<string, bigint> }) {
+export async function configuredAllocation(input: { propertyId: string; categoryId: string; units: RawUnit[]; start: Date; end: Date; amountCents: bigint; purpose?: string; sourceType: string; charges?: AllocationCharge[]; legacyMethod?: "AREA" | "FIXED_SHARES"; consumptionWeights?: Record<string, bigint>; sectionConsumption?: (unitId: string, start: Date, end: Date) => Promise<{ quantity: bigint; evidence: unknown[] }> }) {
   const rules = await prisma.propertyCostAllocationRule.findMany({ where: { propertyId: input.propertyId, costCategoryId: input.categoryId, purpose: input.purpose || "TOTAL", supersededAt: null }, include: { units: true }, orderBy: [{ validFrom: "asc" }, { id: "asc" }] });
   const states = await prisma.unitStatePeriod.findMany({ where: { unitId: { in: input.units.map((u) => u.id) } } });
   const result: ConfiguredAllocationResult = { allocations: [], unitDetails: [], tenantAmountCents: 0n, landlordOwnerAmountCents: 0n, vacancyAmountCents: 0n };
@@ -59,6 +59,7 @@ export async function configuredAllocation(input: { propertyId: string; category
         const weights: bigint[] = [];
         for (const unit of units) {
           if (!unit.included) { weights.push(0n); continue; }
+          if (input.sectionConsumption) { const measured = await input.sectionConsumption(unit.unitId, start, end); if (measured.quantity < 0n) throw new Error("Negativer Zählerverbrauch"); weights.push(measured.quantity); consumptionEvidence.push(...measured.evidence); continue; }
           if (input.consumptionWeights) { weights.push(input.consumptionWeights[unit.unitId] ?? 0n); continue; }
           if (method === "HEIZKOSTENV") {
             const meters = await prisma.heatMeter.findMany({ where: { unitId: unit.unitId, heatingSystem: { propertyId: input.propertyId }, validFrom: { lte: start }, OR: [{ validTo: null }, { validTo: { gte: end } }] }, include: { readings: { where: { confirmed: true, readingDate: { in: [start, new Date(end.getTime() + day)] } }, orderBy: { readingDate: "asc" } } } });

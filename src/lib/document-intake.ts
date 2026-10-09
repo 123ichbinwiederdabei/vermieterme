@@ -3,8 +3,10 @@ import { persistOriginal, queueDocumentArchive } from "@/lib/document-archive";
 import { assertDraftPeriod, invalidateProperty } from "@/lib/billing-freshness";
 import { recordLifecycleAudit } from "@/lib/mcp/entities";
 import type { AuditContext } from "@/lib/domain-changes";
+import { DOCX_MIME } from "@/lib/document-types";
 
 export async function intakeDocument(bytes: Buffer, mimeType: string, name: string, metadata: Record<string, unknown>, context: AuditContext) {
+  if (mimeType === DOCX_MIME && (metadata.costInvoiceId || metadata.heatingOilDeliveryId)) throw new Error("DOCX evidence cannot be imported as an invoice or oil delivery original");
   const invoice = metadata.costInvoiceId ? await prisma.costInvoice.findUniqueOrThrow({ where: { id: String(metadata.costInvoiceId) } }) : null;
   const period = metadata.billingPeriodId ? await prisma.billingPeriod.findUniqueOrThrow({ where: { id: String(metadata.billingPeriodId) } }) : null;
   const tenant = metadata.tenantId ? await prisma.tenant.findUniqueOrThrow({ where: { id: String(metadata.tenantId) }, include: { unit: true } }) : null;

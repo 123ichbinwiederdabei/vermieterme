@@ -625,14 +625,23 @@ export async function buildElectricityPreview(
     if (cursor <= end)
       blockers.push(`Grundpreis: Tarifdeckung für ${contract.provider} fehlt.`);
     totalBase += contractBase;
-    if (contractBase > 0n && !contract.basePriceAgreementNote?.trim())
+    if (contractBase > 0n && end < new Date("2026-10-01T00:00:00Z") && !contract.basePriceAgreementNote?.trim())
       blockers.push("Vereinbarung zum Strom-Grundpreisschlüssel fehlt.");
     if (end >= new Date("2026-10-01T00:00:00Z")) {
       try {
-        const base = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, purpose: "BASE", units, start, end, amountCents: contractBase, sourceType: "ELECTRICITY" });
+        const base = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, purpose: "BASE", units, start, end, amountCents: contractBase, sourceType: "ELECTRICITY", sectionConsumption: async (unitId, sectionStart, sectionEnd) => {
+          const unit = units.find((u) => u.id === unitId)!;
+          const assigned = meters.filter((meter) => meter.unitId === unitId && ["UNIT_CONSUMPTION", "OWNER_CONSUMPTION"].includes(meter.role) && (meter.validFrom ?? sectionStart) <= sectionEnd && (!meter.validTo || meter.validTo >= sectionStart));
+          if (!assigned.length) throw new Error(`Strom-Verbrauchszähler für ${unit.name} fehlt.`);
+          const readings = assigned.map((meter) => meterIntervals(contract, meter, sectionStart, sectionEnd, unit.tenants));
+          const faults = readings.flatMap((reading) => reading.blockers);
+          if (faults.length) throw new Error(faults.join(" "));
+          return { quantity: readings.flatMap((reading) => reading.intervals).reduce((sum, row) => sum + toScaledInteger(row.consumptionKwh), 0n), evidence: readings.flatMap((reading) => reading.intervals) };
+        } });
+        if (contractBase > 0n && base.rules.some((rule) => !rule.sourceDocumentId)) throw new Error("Vertragsnachweis zum Strom-Grundpreisschlüssel fehlt.");
         allocations.push(...base.allocations);
         fixedOwner += base.landlordOwnerAmountCents; fixedVacancy += base.vacancyAmountCents;
-        intervalDetails.push({ baseRules: serializeExact(base.rules), baseStates: serializeExact(base.states), landlordOwnerCents: base.landlordOwnerAmountCents.toString(), vacancyCents: base.vacancyAmountCents.toString() });
+        intervalDetails.push({ baseRules: serializeExact(base.rules), baseStates: serializeExact(base.states), baseConsumptionEvidence: serializeExact(base.consumptionEvidence), landlordOwnerCents: base.landlordOwnerAmountCents.toString(), vacancyCents: base.vacancyAmountCents.toString() });
       } catch (error) { blockers.push(error instanceof Error ? error.message : "Grundpreisverteilung fehlgeschlagen"); }
     } else {
       const billable = contract.basePriceAllocation === "EQUAL_PER_UNIT" ? units : units.filter((unit) => consumption.has(unit.id));

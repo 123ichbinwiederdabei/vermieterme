@@ -70,6 +70,8 @@ Vereinbarte Betriebs-/Heizkostenvorauszahlungen werden gemeinsam einmal angerech
 
 Produktiv wurde ausschließlich die ausdrücklich freigegebene Periodenteilung durchgeführt: die bisherige Restperiode ist SUPERSEDED, neue offene Zeiträume sind 13.–30.09.2026 und 01.10.–31.12.2026. Die Vorschau war benutzergebunden; ein erneuter Commit lieferte dasselbe Ergebnis. Historische Sonderperiode, alte Snapshots, Vertragswerte und Verbrauchsledger bleiben erhalten. Die Finanzumstellung und Oktober-Regeln wurden nicht angewendet, weil die geprüften Nachtragsentwürfe vom Plan abweichen und unterzeichnete Nachweise fehlen. Die Oktoberprüfung meldet fehlende aktive Kostenarten sowie fehlende vollständige Berechnungen und gibt keine Abrechnung frei.
 
+Nachfolgende Nutzerentscheidung: Bei Widersprüchen sind die neuesten Vertragsfassungen maßgeblich. Ihre Werte weichen von der oben beschriebenen ursprünglichen `prepare_krandorf_transition`-Aktion ab. Deshalb die einzelnen `set_financial_period`-/`set_allocation_rule`-Vorschauen mit den ausgewählten Nachträgen als Quellen verwenden; keine ursprünglichen Planwerte automatisch übernehmen. DOCX-Vertragsoriginale können über Web/MCP und dieselben Fachmodule unverändert importiert und archiviert werden, ausschließlich mit Kategorie `contract`, `lease` oder `stammdaten`. Sie werden nicht als Rechnung oder Heizöllieferung importiert. Die Wahl einer Quelle bestätigt keine dort fehlende Unterschrift oder Messung.
+
 Grundsteuer wird separat mit belegtem Mietwohnanteil bestätigt. Historische Sonderzeiträume verlangen einen eigenen Nachweis; aktive überlappende Zeiträume werden abgewiesen. Unbekannte historische Flächen-/Nutzungsgültigkeit wird nicht erfunden.
 
 ## Microsoft-Einführung nach gesonderter Bestätigung
