@@ -3,6 +3,9 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
+  // Files share one disposable SQLite database. Serial workers keep unrelated
+  // fixture mutations from invalidating a reviewed business fingerprint.
+  workers: 1,
   retries: 0,
   timeout: 120_000,
   expect: { timeout: 20_000 },
@@ -14,7 +17,7 @@ export default defineConfig({
     url: "http://127.0.0.1:3210/api/auth/session",
     reuseExistingServer: false,
     timeout: 300_000,
-    env: { DATABASE_URL: "file:./e2e.db", AUTH_SECRET: "e2e-secret-at-least-32-characters-long", AUTH_TRUST_HOST: "true", ADMIN_EMAIL: "e2e@example.test", ADMIN_PASSWORD: "e2e-password" },
+    env: { DATABASE_URL: "file:./e2e.db", AUTH_SECRET: "e2e-secret-at-least-32-characters-long", AUTH_TRUST_HOST: "true", ADMIN_EMAIL: "e2e@example.test", ADMIN_PASSWORD: "e2e-password", MCP_SIGNING_SECRET: "e2e-mcp-signing-secret-at-least-32-characters", MCP_BASE_URL: "https://vermieterme.example.test" },
   },
   // The Windows development host has Chrome installed, while CI installs the
   // Playwright-managed Chromium binary.  Do not pin CI to a system browser.

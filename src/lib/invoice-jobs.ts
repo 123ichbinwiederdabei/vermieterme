@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { documentFile } from "@/lib/document-archive";
 import { prisma } from "@/lib/prisma";
 import {
   extractInvoice,
@@ -7,6 +7,9 @@ import {
   type OcrDocument,
   type TemplateRules,
 } from "@/lib/invoice-extraction";
+import { templateHash } from "@/lib/invoice-template-hash";
+import { confirmInvoice } from "@/lib/invoice-service";
+import { eligibleForCategory, categoryCode } from "@/lib/invoice-categories";
 import { googleInvoiceOcr } from "@/lib/google-invoice-ocr";
 
 export async function processNextInvoiceJob() {
@@ -43,7 +46,7 @@ export async function processNextInvoiceJob() {
       ? (JSON.parse(job.ocrJson) as OcrDocument)
       : await googleInvoiceOcr(
           await readFile(
-            path.join(process.cwd(), "data/uploads", job.document.fileName),
+            documentFile(job.document.fileName),
           ),
           job.document.mimeType,
           job.id,
@@ -89,15 +92,33 @@ export async function processNextInvoiceJob() {
               : "Keine veröffentlichte Rechnungsvorlage passt. Vorlage anlegen oder manuell erfassen.",
           ],
         };
+    let reviewReason: string | null = null;
+    const sources = await prisma.importedSourceItem.findMany({ where: { invoiceId: job.invoiceId } });
+    const autoBook = sources.length > 0 && await prisma.microsoftImportSource.count({ where: { id: { in: sources.map((s) => s.sourceId) }, enabled: true, autoBook: true } }) > 0;
+    if (autoBook && matching.length === 1 && template && !result.errors.length && template.testedHash === templateHash(JSON.parse(template.rulesJson), JSON.parse(template.markersJson))) {
+      try {
+        const tests = JSON.parse(template.testResultsJson || "[]") as Array<{ passed: boolean; role: string; fileHash: string }>;
+        if (tests.length < 3 || !tests.every((t) => t.passed) || tests.filter((t) => t.role === "TRAINING").length < 2 || !tests.some((t) => t.role === "HOLDOUT") || new Set(tests.map((t) => t.fileHash)).size !== tests.length) throw new Error("Independent template validation missing");
+        const category = await prisma.costCategory.findUniqueOrThrow({ where: { id: job.invoice.costCategoryId } });
+        const values = Object.fromEntries(Object.entries(result.fields).map(([key, field]) => [key, field.value || ""]));
+        if (!values.supplier || !values.invoiceNumber || !values.invoiceDate || !values.servicePeriodStart || !values.servicePeriodEnd || !values.netAmountCents || !values.vatAmountCents || !values.vatRate) throw new Error("Supplier, number, dates and tax evidence must be unambiguous");
+        if (["TARIF", "HEATING_OIL", "BESCHEID"].includes(job.invoice.section)) throw new Error("Contract, tariff, tank or residential tax basis requires confirmed association");
+        if (result.lines.length && result.lines.some((line) => !eligibleForCategory(categoryCode(category), line))) throw new Error("Non-allocatable or uncertain invoice positions require review");
+        const activeLease = await prisma.invoiceExtractionJob.count({ where: { id: job.id, status: "PROCESSING", attempts: job.attempts + 1, leaseUntil: { gt: new Date() } } });
+        if (!activeLease) return true;
+        await prisma.user.upsert({ where: { id: "system:invoice-worker" }, create: { id: "system:invoice-worker", name: "Automatic invoice worker" }, update: {} });
+        await confirmInvoice(job.invoiceId, { values, ...(result.lines.length ? { lines: result.lines } : {}) }, "system:invoice-worker");
+      } catch (error) { reviewReason = error instanceof Error ? error.message : "Automatic validation failed"; }
+    }
     await prisma.invoiceExtractionJob.updateMany({
-      where: { id: job.id, status: "PROCESSING" },
+      where: { id: job.id, status: "PROCESSING", attempts: job.attempts + 1 },
       data: {
         status: "REVIEW_REQUIRED",
         leaseUntil: null,
         ocrJson: JSON.stringify(ocr),
         templateId: template?.id ?? null,
         resultJson: JSON.stringify(result),
-        error: null,
+        error: reviewReason,
       },
     });
   } catch (error) {
@@ -108,7 +129,7 @@ export async function processNextInvoiceJob() {
     const retry = transient && job.attempts < 2;
     // Provider errors may contain request details: persist a sanitized message.
     await prisma.invoiceExtractionJob.updateMany({
-      where: { id: job.id, status: "PROCESSING" },
+      where: { id: job.id, status: "PROCESSING", attempts: job.attempts + 1 },
       data: {
         status: retry ? "QUEUED" : "FAILED",
         leaseUntil: null,

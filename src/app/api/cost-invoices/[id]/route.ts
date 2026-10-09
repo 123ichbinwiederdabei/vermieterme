@@ -15,7 +15,7 @@ export function PATCH(
       return jsonOk(await confirmInvoice(id, body, session.user.id));
     const invoice = await prisma.costInvoice.findUnique({ where: { id } });
     if (!invoice) throw new ApiError("Rechnung fehlt", 404);
-    await assertDraftPeriod(invoice.billingPeriodId);
+    if (invoice.billingPeriodId) await assertDraftPeriod(invoice.billingPeriodId);
     if (invoice.status !== "DRAFT")
       throw new ApiError("Bestätigte Rechnung ist unveränderlich", 409);
     const updated = await prisma.costInvoice.update({
@@ -38,7 +38,7 @@ export function DELETE(
     const { id } = await params;
     const invoice = await prisma.costInvoice.findUnique({ where: { id } });
     if (!invoice) throw new ApiError("Rechnung fehlt", 404);
-    await assertDraftPeriod(invoice.billingPeriodId);
+    if (invoice.billingPeriodId) await assertDraftPeriod(invoice.billingPeriodId);
     if (invoice.status !== "DRAFT")
       throw new ApiError(
         "Bestätigte Rechnung kann nur durch eine Revision korrigiert werden",

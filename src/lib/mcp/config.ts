@@ -2,6 +2,7 @@ export const MCP_SCOPES = [
   "vermieterme:read",
   "vermieterme:write",
   "vermieterme:admin",
+  "vermieterme:approve",
 ] as const;
 
 export type McpScope = (typeof MCP_SCOPES)[number];
@@ -39,14 +40,18 @@ export function mcpSigningSecret() {
 }
 
 export function parseScopes(value: string | null | undefined): McpScope[] {
-  const requested = (value || MCP_SCOPES.join(" ")).split(/\s+/).filter(Boolean);
+  const requested = (value || "vermieterme:read").split(/\s+/).filter(Boolean);
   const invalid = requested.filter((scope) => !MCP_SCOPES.includes(scope as McpScope));
   if (invalid.length) throw new Error(`Unsupported scope: ${invalid.join(", ")}`);
   return [...new Set(requested)] as McpScope[];
 }
 
 export function requireMcpScope(scopes: string[], required: McpScope) {
-  if (!scopes.includes(required) && !scopes.includes("vermieterme:admin")) {
-    throw new Error(`Missing required scope: ${required}`);
+  if (!scopes.includes(required)) {
+    throw new McpScopeError(required);
   }
+}
+
+export class McpScopeError extends Error {
+  constructor(public required: McpScope) { super(`Missing required scope: ${required}`); }
 }

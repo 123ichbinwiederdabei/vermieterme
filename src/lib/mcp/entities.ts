@@ -16,7 +16,7 @@ const SECRET_FIELDS = new Set([
 const PROTECTED_MODELS = new Set([
   "Account", "Session", "VerificationToken", "TenantAccessToken",
   "BillingSnapshot", "CostAllocation", "OilInventoryLot", "OilLotConsumption",
-  "ElectricityReadingAudit", "McpOAuthClient", "McpAuthorizationCode",
+  "DomainChangePreview", "DocumentArchive", "StatementRevision", "StatementArtifact", "StatementDispatch", "BackgroundJob", "InvoiceConsumption", "ElectricityReadingAudit", "McpOAuthClient", "McpAuthorizationCode",
   "McpRefreshToken", "McpMutationTokenUse", "McpAuditEvent",
 ]);
 
@@ -24,7 +24,7 @@ const PROTECTED_MODELS = new Set([
 // Prisma model. It remains constrained to scalar data and addressable records:
 // relation writes, primary-key changes, raw queries, and unredacted reads are
 // never accepted. Focused tools are still preferred for business workflows.
-const DIRECT_MUTATION_MODELS = new Set(Prisma.dmmf.datamodel.models.map((model) => model.name));
+const DIRECT_MUTATION_MODELS = new Set(["PdfTemplate", "VpiEntry"]);
 
 function modelByName(name: string) {
   const model = Prisma.dmmf.datamodel.models.find((entry) => entry.name === name);
@@ -151,9 +151,9 @@ export function describeEntityType(entityType: string) {
   const model = modelByName(entityType);
   return {
     ...listEntityTypes().find((entry) => entry.name === entityType),
-    fields: model.fields.map(fieldDescriptor),
-    note: PROTECTED_MODELS.has(entityType)
-      ? "Generic scalar CRUD is available to the private administrator MCP. Prefer a focused lifecycle tool to preserve this model's business workflow."
+    fields: model.fields.map((field) => ({ ...fieldDescriptor(field), writable: DIRECT_MUTATION_MODELS.has(entityType) && fieldDescriptor(field).writable })),
+    note: !DIRECT_MUTATION_MODELS.has(entityType)
+      ? "Read-only through generic tools. Use audited lifecycle actions; historical records cannot be overwritten."
       : "Generic scalar CRUD is available subject to validation and read-before-write grants.",
   };
 }

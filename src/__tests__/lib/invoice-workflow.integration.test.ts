@@ -18,13 +18,21 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/auth", () => ({
-  auth: vi.fn().mockResolvedValue({ user: { id: "test-user" } }),
+  auth: vi.fn().mockResolvedValue({ user: { id: "test-user", email: "e2e@example.test" } }),
 }));
 import { confirmInvoice } from "@/lib/invoice-service";
 import { buildEnergyPreview } from "@/lib/energy-preview";
 import { buildTenantStatement } from "@/lib/billing-statement";
 import { POST as apply } from "@/app/api/billing-periods/[id]/energy-preview/route";
-import { POST as issue } from "@/app/api/billing-periods/[id]/issue/route";
+import { previewBillingPeriod, issueBillingPreview } from "@/lib/billing-workflow";
+import { processNextBackgroundJob } from "@/lib/background-jobs";
+import { MicrosoftGraph } from "@/lib/microsoft-graph";
+const graph = new class extends MicrosoftGraph {
+  files = new Map<string, Buffer>();
+  async uploadImmutable(_drive: string, _root: string, name: string, bytes: Buffer) { this.files.set(name, bytes); return name; }
+  async moveImmutable(_drive: string, _root: string, id: string, name: string) { this.files.set(name, this.files.get(id)!); this.files.delete(id); return name; }
+}();
+const audit = { userId: "test-user", requestId: "integration", reason: "Explicit reviewed test approval" };
 import { POST as reviseLot } from "@/app/api/heating-oil/route";
 import { POST as revise } from "@/app/api/billing-periods/[id]/revise/route";
 import {
@@ -97,6 +105,7 @@ async function invoice(
   return row;
 }
 beforeAll(async () => {
+  process.env.ADMIN_EMAIL = "e2e@example.test";
   folder = await mkdtemp(path.join(tmpdir(), "vermieterme-workflow-"));
   state.db = migratedClient("original");
   fixture = await createKrandorfFixture(state.db, "integration");
@@ -209,14 +218,24 @@ it("migrates, conserves every category, appends snapshots and freezes issued sta
       where: { costCategoryId: fixture.categories.WATER },
     }),
   ).toBe(2);
-  const response = await issue(request({}), params(fixture.period.id));
-  expect(response.status, await response.text()).toBe(201);
+  await state.db.documentStorage.create({ data: { propertyId: fixture.property.id, driveId: "test-drive", rootItemId: "test-root", objectFolder: "Krandorf", enabled: true } });
+  const { queueDocumentArchive } = await import("@/lib/document-archive");
+  await queueDocumentArchive(fixture.document.id, fixture.property.id);
+  while (await processNextBackgroundJob(graph)) { /* isolated test jobs */ }
+  const billingPreview = await previewBillingPeriod(fixture.period.id, audit);
+  expect(billingPreview.blockers).toEqual([]);
+  expect(billingPreview.documents).toHaveLength(2);
+  while (await processNextBackgroundJob(graph)) { /* verify draft uploads */ }
+  expect(await issueBillingPreview(billingPreview.previewId!, true, audit)).toMatchObject({ status: "ARCHIVING" });
+  expect(await state.db.statementRevision.count()).toBe(0);
+  while (await processNextBackgroundJob(graph)) { /* final archive verification */ }
+  await issueBillingPreview(billingPreview.previewId!, true, audit);
   const frozen = await buildTenantStatement(
     fixture.period.id,
     fixture.tenants[0].id,
   );
   expect(frozen.draft).toBe(false);
-  expect(frozen.totalActualCents).toBe("83462");
+  expect(frozen.totalActualCents).toBe("82962");
   expect(frozen.totalPrepaymentCents).toBe("60000");
   const oldSnapshots = await state.db.billingSnapshot.findMany();
   const oldConsumptions = await state.db.oilLotConsumption.findMany();
@@ -313,7 +332,7 @@ it("processes durable OCR jobs once, retains proposals for review and never appl
 it("exports and restores all invoice, FIFO and statement history into an isolated empty database", async () => {
   const response = await exportBackup();
   const backup = await response.json();
-  expect(backup.version).toBe(3);
+  expect(backup.version).toBe(4);
   const expected = backup.data;
   await state.db.$disconnect();
   state.db = migratedClient("restored");
@@ -326,7 +345,7 @@ it("exports and restores all invoice, FIFO and statement history into an isolate
     fixture.period.id,
     fixture.tenants[0].id,
   );
-  expect(statement.totalActualCents).toBe("83462");
+  expect(statement.totalActualCents).toBe("82962");
   expect((await restoreBackup(request(backup))).status).toBe(409);
 }, 60_000);
 

@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Locator } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
@@ -34,7 +35,7 @@ async function createAndConfirm(
   await review.locator("input[type=file]").setInputFiles({
     name: "synthetic-invoice.png",
     mimeType: "image/png",
-    buffer: fixturePng,
+    buffer: Buffer.concat([fixturePng, Buffer.from(`synthetic-${amount}-${Date.now()}`)]),
   });
   await expect(
     review.getByRole("link", { name: "synthetic-invoice.png", exact: true }),
@@ -126,6 +127,11 @@ test("uploads invoices in all categories, publishes a visual template and freeze
       }),
     );
   const png = await invoicePage.screenshot();
+  const otherPngs: Buffer[] = [];
+  for (let i = 0; i < 2; i++) {
+    await invoicePage.locator("body").evaluate((body, index) => { let stamp = body.querySelector("#sample-stamp"); if (!stamp) { stamp = document.createElement("p"); stamp.id = "sample-stamp"; stamp.setAttribute("style", "position:absolute;top:700px;left:80px"); body.appendChild(stamp); } stamp.textContent = `Unabhängiger Beispielbeleg ${index + 2}`; }, i);
+    otherPngs.push(await invoicePage.screenshot());
+  }
   await invoicePage.close();
   await review.locator("input[type=file]").setInputFiles({
     name: "water-invoice.png",
@@ -174,6 +180,14 @@ test("uploads invoices in all categories, publishes a visual template and freeze
       }),
     },
   });
+  for (const [i, bytes] of otherPngs.entries()) {
+    const fileName = `browser-water-sample-${i}-${fixture.property.id}.png`;
+    await writeFile(path.join("data/uploads", fileName), bytes);
+    const doc = await db.document.create({ data: { propertyId: fixture.property.id, fileName, originalName: `water-example-${i}.png`, mimeType: "image/png", size: bytes.length, category: "invoice", fileHash: createHash("sha256").update(bytes).digest("hex") } });
+    const sampleInvoice = await db.costInvoice.create({ data: { propertyId: fixture.property.id, billingPeriodId: fixture.period.id, costCategoryId: fixture.categories.WATER, section: "WASSER", status: "CONFIRMED", invoiceNumber: `OLD-SAMPLE-${i}`, invoiceDate: new Date("2010-12-31"), servicePeriodStart: new Date("2010-01-01"), servicePeriodEnd: new Date("2010-12-31"), totalAmountCents: 39000n, supplier: "Wasserwerk Muster", attachments: { create: { documentId: doc.id } } } });
+    await db.invoiceExtractionJob.create({ data: { invoiceId: sampleInvoice.id, documentId: doc.id, status: "REVIEW_REQUIRED", ocrJson: JSON.stringify(ocr) } });
+  }
+  await page.reload();
   await water.getByText("Rechnungsvorlagen", { exact: true }).click();
   await expect(
     water.getByRole("button", { name: "Vorlage aus Musterbeleg erstellen" }),
@@ -184,6 +198,7 @@ test("uploads invoices in all categories, publishes a visual template and freeze
   const dialog = page.getByRole("dialog", {
     name: "Rechnungsvorlage bearbeiten",
   });
+  await dialog.getByLabel("Testbeleg", { exact: true }).selectOption({ label: "water-invoice.png" });
   await dialog
     .getByLabel("Vorlagenname", { exact: true })
     .fill("Wasserwerk Layout A");
@@ -241,6 +256,14 @@ test("uploads invoices in all categories, publishes a visual template and freeze
   await expect(
     dialog.getByRole("button", { name: "Vorlage testen" }),
   ).toBeEnabled();
+  for (const [index, name] of ["water-invoice.png", "water-example-0.png", "water-example-1.png"].entries()) {
+    await dialog.getByLabel("Testbeleg", { exact: true }).selectOption({ label: name });
+    for (const [fieldIndex, value] of Object.values(expected).entries()) await dialog.getByLabel(/Erwarteter Testwert/).nth(fieldIndex).fill(value);
+    if (index === 2) await dialog.getByLabel("Belegrolle", { exact: true }).selectOption("HOLDOUT");
+    await dialog.getByRole("button", { name: "Sollwerte am Original prüfen" }).click();
+    await dialog.getByRole("button", { name: "Diese Sollwerte bestätigen" }).click();
+    await expect(dialog.getByText(/Unabhängige Sollwerte gespeichert/)).toBeVisible();
+  }
   await dialog.getByRole("button", { name: "Vorlage testen" }).click();
   await expect(
     dialog.getByRole("button", { name: "Veröffentlichen", exact: true }),
@@ -296,7 +319,7 @@ test("uploads invoices in all categories, publishes a visual template and freeze
       .getByRole("button", { name: "Geprüfte Rechnung bestätigen" })
       .click();
     await expect(
-      water.locator("summary").filter({ hasText: "CONFIRMED" }),
+      water.locator("summary").filter({ hasText: "WATER-E2E-1" }).filter({ hasText: "CONFIRMED" }),
     ).toBeVisible();
   } finally {
     worker.kill("SIGTERM");
@@ -362,15 +385,46 @@ test("uploads invoices in all categories, publishes a visual template and freeze
       }),
     ).toBeVisible();
   }
+  const storage = await db.documentStorage.create({ data: { propertyId: fixture.property.id, driveId: "browser-fake-drive", rootItemId: "browser-fake-root", objectFolder: "Krandorf", enabled: true } });
+  const invoices = await db.costInvoice.findMany({ where: { propertyId: fixture.property.id, status: "CONFIRMED", servicePeriodStart: { lte: fixture.period.endDate }, servicePeriodEnd: { gte: fixture.period.startDate } }, include: { attachments: { include: { document: true } } } });
+  for (const inv of invoices) for (const { document: doc } of inv.attachments) {
+    const fileBytes = await readFile(path.join("data/uploads", doc.fileName));
+    const sha256 = createHash("sha256").update(fileBytes).digest("hex");
+    expect(sha256).toBe(doc.fileHash);
+    await db.documentArchive.upsert({ where: { documentId: doc.id }, create: { documentId: doc.id, storageId: storage.id, relativePath: `Krandorf/2026/Rechnungen/Test/${doc.id}.png`, sha256, size: fileBytes.length, status: "VERIFIED", itemId: `fake-${doc.id}` }, update: { status: "VERIFIED", sha256, size: fileBytes.length } });
+  }
   await page
     .getByRole("button", { name: "Abrechnung ausstellen", exact: true })
     .click();
-  await expect(page.getByText(/Abrechnung ausgestellt/)).toBeVisible();
+  await expect(page).toHaveURL(/workflow/);
+  await page.getByLabel("Objekt", { exact: true }).selectOption(fixture.property.id);
+  await page.getByLabel("Zeitraum", { exact: true }).selectOption(fixture.period.id);
+  await page.getByRole("button", { name: "PDF-Vorschau erstellen" }).click();
+  await expect(page.getByText("Fachprüfung bestanden", { exact: true })).toBeVisible();
+  const verifyFixtureArchives = async () => {
+    const archives = await db.documentArchive.findMany({ where: { storageId: storage.id }, include: { document: true } });
+    for (const archive of archives) {
+      const bytes = await readFile(path.join("data/uploads", archive.document.fileName));
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(archive.sha256);
+      expect(bytes.length).toBe(archive.size);
+      await db.documentArchive.update({ where: { id: archive.id }, data: { status: "VERIFIED", itemId: `fake-${archive.id}` } });
+    }
+  };
+  // Browser tests simulate cloud verification; the integration suite runs the
+  // actual upload/move protocol against a Graph transport with injected faults.
+  await verifyFixtureArchives();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Geprüfte PDFs freigeben" }).click();
+  await expect(page.getByRole("status")).toContainText("Endgültige Ablage wird geprüft");
+  await verifyFixtureArchives();
+  await page.getByRole("button", { name: "Geprüfte PDFs freigeben" }).click();
+  await expect(page.getByRole("status")).toContainText("Abrechnung ausgestellt");
   const before = await page.request.get(
     `/api/billing-periods/${fixture.period.id}/pdf?tenantId=${fixture.tenants[0].id}`,
   );
   expect(before.ok()).toBe(true);
   expect(before.headers()["content-type"]).toContain("application/pdf");
+  expect(before.headers()["content-disposition"]).toContain("R001.pdf");
   const bytes = await before.body();
   await db.tenant.update({
     where: { id: fixture.tenants[0].id },
@@ -380,9 +434,8 @@ test("uploads invoices in all categories, publishes a visual template and freeze
     `/api/billing-periods/${fixture.period.id}/pdf?tenantId=${fixture.tenants[0].id}`,
   );
   expect(await after.body()).toEqual(bytes);
-  await expect(
-    water.getByRole("button", { name: "Rechnung erfassen", exact: true }),
-  ).not.toBeVisible();
+  await page.goto(`/billing/${fixture.period.id}`);
+  await expect(water.getByRole("button", { name: "Rechnung erfassen", exact: true })).not.toBeVisible();
 });
 
 test.afterAll(async () => {

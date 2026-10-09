@@ -3,7 +3,7 @@ vi.mock("@/lib/auth", () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: "admin" } }),
 }));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { billingPeriod: { findUnique: vi.fn() }, $transaction: vi.fn() },
+  prisma: { billingPeriod: { findUnique: vi.fn(), count: vi.fn().mockResolvedValue(0) }, billingSnapshot: { findMany: vi.fn().mockResolvedValue([]) }, $transaction: vi.fn() },
 }));
 vi.mock("@/lib/energy-preview", () => ({ buildEnergyPreview: vi.fn() }));
 import { prisma } from "@/lib/prisma";
@@ -52,6 +52,7 @@ it("Applying one MANUAL category does not supersede another category's snapshot"
       create: vi.fn(async ({ data }) => ({ id: "new", ...data })),
     },
     costAllocation: { deleteMany: vi.fn(), createMany: vi.fn() },
+    costCategory: { findUniqueOrThrow: vi.fn().mockResolvedValue({ name: "Grundsteuer", code: "PROPERTY_TAX" }) }, costInvoice: { findMany: vi.fn().mockResolvedValue([]) }, mcpAuditEvent: { create: vi.fn() },
     cost: { upsert: vi.fn() },
   };
   vi.mocked(prisma.billingPeriod.findUnique).mockResolvedValue({

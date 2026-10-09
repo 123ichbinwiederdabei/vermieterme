@@ -1,5 +1,6 @@
+import { recordLifecycleAudit } from "@/lib/mcp/entities";
 import { prisma } from "@/lib/prisma";
-import { ApiError } from "@/lib/api-utils";
+import { ApiError } from "@/lib/api-error";
 import {
   dateValue,
   decimalString,
@@ -105,7 +106,7 @@ export async function confirmInvoice(id: string, body: Input, actorId: string) {
     include: { costCategory: true, attachments: true, lines: true },
   });
   if (!invoice) throw new ApiError("Rechnung nicht gefunden", 404);
-  await assertDraftPeriod(invoice.billingPeriodId);
+  if (invoice.billingPeriodId) await assertDraftPeriod(invoice.billingPeriodId);
   if (invoice.status !== "DRAFT")
     throw new ApiError(
       "Bestätigte Rechnung unveränderlich; Korrektur als Revision erfassen",
@@ -114,7 +115,7 @@ export async function confirmInvoice(id: string, body: Input, actorId: string) {
   if (!invoice.attachments.length && !invoice.documentId)
     throw new ApiError("Rechnungsbeleg erforderlich", 400);
   const code = categoryCode(invoice.costCategory);
-  if (!(INVOICE_SECTIONS[code] ?? []).includes(invoice.section))
+  if (!(INVOICE_SECTIONS[code] ?? ["OPERATING"]).includes(invoice.section))
     throw new ApiError("Ungültige Rechnungskategorie", 400);
   const parsed = invoiceInput(body, invoice.section);
   const duplicate = await prisma.costInvoice.findFirst({
@@ -194,7 +195,7 @@ export async function confirmInvoice(id: string, body: Input, actorId: string) {
     )
       throw new ApiError("Ungültiger Tarifzeitraum", 400);
   }
-  return prisma.$transaction(async (tx) => {
+  const confirmed = await prisma.$transaction(async (tx) => {
     if (
       invoice.revisionOfId &&
       (await tx.costInvoice.count({
@@ -381,11 +382,11 @@ export async function confirmInvoice(id: string, body: Input, actorId: string) {
         },
       });
     await tx.categoryCalculationHead.updateMany({
-      where: { billingPeriod: { propertyId: invoice.propertyId } },
+      where: { billingPeriod: { propertyId: invoice.propertyId, statementRevisions: { none: {} }, status: { not: "SUPERSEDED" } } },
       data: { stale: true },
     });
     await tx.billingPeriod.updateMany({
-      where: { propertyId: invoice.propertyId },
+      where: { propertyId: invoice.propertyId, statementRevisions: { none: {} }, status: { not: "SUPERSEDED" } },
       data: { sourceRevision: { increment: 1 } },
     });
     await tx.invoiceExtractionJob.updateMany({
@@ -399,11 +400,12 @@ export async function confirmInvoice(id: string, body: Input, actorId: string) {
         confirmedAt: new Date(),
       },
     });
-    return serializeExact(
-      await tx.costInvoice.findUnique({
-        where: { id },
-        include: { lines: true },
-      }),
-    );
+    const result = await tx.costInvoice.findUnique({ where: { id }, include: { lines: true } });
+    await recordLifecycleAudit({ userId: actorId, requestId: `invoice:${id}`, reason: actorId.startsWith("system:") ? "Independently tested template and complete invoice validation" : "Invoice original and classification explicitly reviewed", action: actorId.startsWith("system:") ? "AUTO_BOOK_INVOICE" : "CONFIRM_INVOICE", entityType: "CostInvoice", itemRef: id, before: invoice, after: result }, tx);
+    return serializeExact(result);
   });
+  const { queueDocumentArchive } = await import("@/lib/document-archive");
+  for (const documentId of new Set([evidence, ...invoice.attachments.map((a) => a.documentId)])) await queueDocumentArchive(documentId, invoice.propertyId);
+  return confirmed;
+
 }

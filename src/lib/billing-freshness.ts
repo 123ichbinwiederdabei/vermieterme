@@ -23,11 +23,11 @@ export async function assertDraftPeriod(id: string) {
 export async function invalidateProperty(propertyId: string) {
   await prisma.$transaction([
     prisma.categoryCalculationHead.updateMany({
-      where: { billingPeriod: { propertyId } },
+      where: { billingPeriod: { propertyId, status: { not: "SUPERSEDED" }, statementRevisions: { none: {} }, sentDate: null, paidDate: null } },
       data: { stale: true },
     }),
     prisma.billingPeriod.updateMany({
-      where: { propertyId },
+      where: { propertyId, status: { not: "SUPERSEDED" }, statementRevisions: { none: {} }, sentDate: null, paidDate: null },
       data: { sourceRevision: { increment: 1 } },
     }),
   ]);
@@ -37,6 +37,7 @@ export async function invalidatePeriod(
   billingPeriodId: string,
   costCategoryId?: string,
 ) {
+  await assertDraftPeriod(billingPeriodId);
   await prisma.$transaction([
     prisma.categoryCalculationHead.updateMany({
       where: { billingPeriodId, ...(costCategoryId ? { costCategoryId } : {}) },

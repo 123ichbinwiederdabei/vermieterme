@@ -23,6 +23,10 @@ Self-hosted Webanwendung zur Verwaltung von Mietobjekten und Erstellung von jäh
 - **IBAN-Validierung** — ISO 13616 Prüfung für Vermieter- und Mieter-Bankverbindung
 - **Vorjahresübernahme** — Automatische Vorschläge zur Übernahme von Abrechnungsdaten aus dem Vorjahr
 
+## ChatGPT und OneDrive
+
+Fachaktionen, Freigaben, Archivierung und Versand sind im [Betriebshandbuch](ops/CHATGPT_ONEDRIVE.md) beschrieben. Die neue Web-Arbeitsübersicht liegt unter `/workflow`; Änderungen an produktiven Daten und die Microsoft-Aktivierung werden separat bestätigt.
+
 ## Tech Stack
 
 - [Next.js 16](https://nextjs.org/) (App Router) mit React 19

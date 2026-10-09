@@ -8,14 +8,14 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:e2e": "pnpm build:worker && playwright test",
+    "test:e2e": "corepack pnpm build:worker && playwright test",
     "test:watch": "vitest",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:local": "tsx prisma/seed.local.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
-    "build:worker": "esbuild scripts/invoice-worker.ts --bundle --platform=node --packages=external --outfile=dist/invoice-worker.cjs",
+    "build:worker": "esbuild scripts/invoice-worker.ts --bundle --jsx=automatic --platform=node --packages=external --outfile=dist/invoice-worker.cjs",
     "worker": "node dist/invoice-worker.cjs"
   },
   "prisma": {

@@ -1,4 +1,4 @@
-import { ApiError } from "@/lib/api-utils";
+import { ApiError } from "@/lib/api-error";
 
 export function requiredString(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) {

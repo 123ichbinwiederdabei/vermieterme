@@ -165,25 +165,7 @@ export default function BillingPeriodPage({
     else setMessage(result.error);
   }
   async function issue() {
-    setBusy("issue");
-    setMessage("");
-    try {
-      const response = await fetch(`/api/billing-periods/${id}/issue`, {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      setMessage(
-        "Abrechnung ausgestellt. PDF und Mieteransicht verwenden die gespeicherte Revision.",
-      );
-      await load();
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Ausstellung fehlgeschlagen",
-      );
-    } finally {
-      setBusy(null);
-    }
+    window.location.href = `/workflow?billingPeriodId=${id}`;
   }
   if (!workspace)
     return (

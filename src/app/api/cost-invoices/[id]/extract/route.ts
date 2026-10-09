@@ -37,7 +37,7 @@ export function POST(
       include: { attachments: true },
     });
     if (!invoice) throw new ApiError("Rechnung fehlt", 404);
-    await assertDraftPeriod(invoice.billingPeriodId);
+    if (invoice.billingPeriodId) await assertDraftPeriod(invoice.billingPeriodId);
     if (invoice.status !== "DRAFT")
       throw new ApiError(
         "Erneute Extraktion darf eine bestätigte Rechnung nicht verändern",

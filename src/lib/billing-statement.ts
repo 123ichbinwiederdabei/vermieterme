@@ -1,8 +1,7 @@
-import { BILLING_CATEGORIES, categoryCode } from "@/lib/invoice-categories";
 import { prisma } from "@/lib/prisma";
 import { allocateCents, prorateMonthlyCents } from "@/lib/billing-v2";
 import { isoDay } from "@/lib/energy-billing";
-import { ApiError } from "@/lib/api-utils";
+import { ApiError } from "@/lib/api-error";
 
 function overlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) {
   const start = aStart > bStart ? aStart : bStart;
@@ -12,6 +11,10 @@ function overlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) {
 
 export interface TenantStatement {
   draft?: boolean;
+  landlord?: { name: string; street: string; zip: string; city: string; email: string | null; iban: string | null; accountHolder: string | null } | null;
+  additionalParties?: Array<{ firstName: string; lastName: string }>;
+  receipts?: Array<{ invoiceId: string; documentId: string; originalName: string; sha256: string | null; supplier: string | null; invoiceNumber: string | null; invoiceDate: string; serviceStart: string; serviceEnd: string }>;
+
   billingPeriodId: string;
   startDate: string;
   endDate: string;
@@ -28,6 +31,8 @@ export interface TenantStatement {
   categories: Array<{
     id: string;
     name: string;
+    landlordCents?: string;
+    vacancyCents?: string;
     totalAmountCents: string;
     actualCents: string;
     prepaymentCents: string;
@@ -78,7 +83,7 @@ export async function buildTenantStatement(
     where: { id: billingPeriodId },
     include: {
       property: true,
-      costs: { include: { costCategory: true } },
+      costs: { where: { enabled: true }, include: { costCategory: true } },
       calculationHeads: { include: { snapshot: true } },
       costAllocations: {
         where: { tenantId, snapshot: { activeHead: { isNot: null } } },
@@ -95,16 +100,17 @@ export async function buildTenantStatement(
     where: { id: tenantId },
     include: {
       unit: true,
+      parties: true,
       financialPeriods: {
         where: { supersededAt: null },
-        include: { components: { include: { costCategory: true } } },
+        include: { components: { include: { costCategory: true } }, flatRateCoverages: true },
         orderBy: { validFrom: "asc" },
       },
     },
   });
   if (!period || !tenant || tenant.unit.propertyId !== period.propertyId)
     throw new ApiError("Abrechnung oder Mietverhältnis nicht gefunden", 404);
-  const heads = period.calculationHeads;
+  const heads = period.calculationHeads.filter((head) => period.costs.some((cost) => cost.costCategoryId === head.costCategoryId));
   if (
     period.status === "SUPERSEDED" ||
     !heads.length ||
@@ -119,17 +125,6 @@ export async function buildTenantStatement(
       "Abrechnung unvollständig oder veraltet: alle Kostenarten berechnen und bestätigen",
       409,
     );
-  const configured = await prisma.costCategory.findMany();
-  for (const required of BILLING_CATEGORIES) {
-    const category = configured.find(
-      (row) => categoryCode(row) === required.code,
-    );
-    if (!category || !heads.some((head) => head.costCategoryId === category.id))
-      throw new ApiError(
-        `${required.name}: Berechnung oder bestätigte Nullkosten fehlen`,
-        409,
-      );
-  }
   const activeIds = new Set(heads.map((head) => head.snapshotId));
   const tenancy = overlap(
     tenant.moveInDate,
@@ -169,6 +164,7 @@ export async function buildTenantStatement(
     });
     actual.set(row.costCategoryId, current);
   }
+  for (const cost of period.costs) if (!actual.has(cost.costCategoryId)) actual.set(cost.costCategoryId, { name: cost.costCategory.name, total: 0n, allocations: [] });
   const coverage = tenant.financialPeriods
     .map((financial) =>
       overlap(
@@ -200,6 +196,28 @@ export async function buildTenantStatement(
       tenancy.end,
     );
     if (!section) continue;
+    // Contractual combined advances are credited once across operating/heating
+    // costs. Electricity remains a separate agreement; receipts are not used.
+    const hasCombined = financial.monthlyGeneralOperatingAndHeatingPrepaymentCents !== 0n || financial.monthlyElectricityPrepaymentCents !== 0n;
+    if (hasCombined) {
+      if (financial.components.length) throw new ApiError("Gemeinsame Vorauszahlung und Einzelkomponenten dürfen nicht gleichzeitig angerechnet werden", 409);
+      for (const [id, name, monthly] of [
+        ["advance:operating-heating", "Vereinbarte Vorauszahlung Betriebskosten / Heizung", financial.monthlyGeneralOperatingAndHeatingPrepaymentCents],
+        ["advance:electricity", "Vereinbarte Stromvorauszahlung", financial.monthlyElectricityPrepaymentCents],
+      ] as const) {
+        const current = prepaid.get(id) ?? { name, total: 0n };
+        current.total += prorateMonthlyCents(monthly, section.start, section.end);
+        prepaid.set(id, current);
+      }
+      if (financial.monthlyPrepaymentCents !== financial.monthlyGeneralOperatingAndHeatingPrepaymentCents + financial.monthlyElectricityPrepaymentCents) throw new ApiError("Vorauszahlungen stimmen nicht mit der Vertragsvereinbarung überein", 409);
+    } else if (!financial.components.length && financial.monthlyPrepaymentCents !== 0n) throw new ApiError("Zuordnung der vereinbarten Vorauszahlung fehlt", 409);
+    if (financial.monthlyFlatRateCents !== 0n) {
+      if (!financial.flatRateCoverages.length) throw new ApiError("Vertragsnachweis der pauschal abgegoltenen Kostenarten fehlt", 409);
+      for (const covered of financial.flatRateCoverages) {
+        const charged = actual.get(covered.costCategoryId)?.allocations.some((row) => row.periodStart <= isoDay(section.end) && row.periodEnd >= isoDay(section.start) && BigInt(row.amountCents) !== 0n);
+        if (charged) throw new ApiError("Pauschal abgegoltene Kosten dürfen nicht zusätzlich abgerechnet werden", 409);
+      }
+    }
     for (const component of financial.components) {
       const current = prepaid.get(component.costCategoryId) ?? {
         name: component.costCategory.name,
@@ -228,6 +246,8 @@ export async function buildTenantStatement(
     return {
       id,
       totalAmountCents,
+      landlordCents: head ? String(JSON.parse(head.snapshot.resultJson).landlordAmountCents || "0") : "0",
+      vacancyCents: head ? String(JSON.parse(head.snapshot.resultJson).vacancyAmountCents || "0") : "0",
       name: actualRow?.name ?? prepaidRow?.name ?? id,
       actualCents: actualCents.toString(),
       prepaymentCents: prepaymentCents.toString(),
@@ -257,8 +277,14 @@ export async function buildTenantStatement(
       return null;
     }
   };
+  const landlord = await prisma.landlordInfo.findFirst();
+  const receiptInvoices = await prisma.costInvoice.findMany({ where: { propertyId: period.propertyId, costCategoryId: { in: period.costs.map((cost) => cost.costCategoryId) }, status: "CONFIRMED", revisions: { none: { status: "CONFIRMED" } }, servicePeriodStart: { lte: period.endDate }, servicePeriodEnd: { gte: period.startDate } }, include: { attachments: { include: { document: true } }, document: true } });
+  const receipts = receiptInvoices.flatMap((invoice) => [...invoice.attachments.map((attachment) => attachment.document), ...(invoice.document ? [invoice.document] : [])].map((document) => ({ invoiceId: invoice.id, documentId: document.id, originalName: document.originalName, sha256: document.fileHash, supplier: invoice.supplier, invoiceNumber: invoice.invoiceNumber, invoiceDate: isoDay(invoice.invoiceDate!), serviceStart: isoDay(invoice.servicePeriodStart!), serviceEnd: isoDay(invoice.servicePeriodEnd!) })));
   return {
     draft: !options.forIssue,
+    landlord: landlord ? { name: landlord.name, street: landlord.street, zip: landlord.zip, city: landlord.city, email: landlord.email, iban: landlord.iban, accountHolder: landlord.accountHolder } : null,
+    additionalParties: tenant.parties.filter((party) => party.validFrom <= tenancy.end && (!party.validTo || party.validTo >= tenancy.start)).map(({ firstName, lastName }) => ({ firstName, lastName })),
+    receipts,
     billingPeriodId,
     startDate: isoDay(period.startDate),
     endDate: isoDay(period.endDate),

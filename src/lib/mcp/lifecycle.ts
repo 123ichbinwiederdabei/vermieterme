@@ -1,16 +1,15 @@
 import { randomUUID } from "crypto";
 import { lookup } from "dns/promises";
 import { isIP } from "net";
-import path from "path";
-import { mkdir, unlink, writeFile } from "fs/promises";
 import { prisma } from "@/lib/prisma";
 import { buildEnergyPreview } from "@/lib/energy-preview";
 import { serializeExact } from "@/lib/billing-v2";
 import { assertDraftPeriod } from "@/lib/billing-freshness";
 import { invalidateProperty } from "@/lib/billing-freshness";
-import { categoryCode, INVOICE_SECTIONS, LINE_CLASSES } from "@/lib/invoice-categories";
+import { categoryCode, INVOICE_SECTIONS, LINE_CLASSES, eligibleForCategory } from "@/lib/invoice-categories";
 import { extractInvoice, templateMatches, validateRules, type OcrDocument, type TemplateRules } from "@/lib/invoice-extraction";
 import { templateHash } from "@/lib/invoice-template-hash";
+import { allocateServiceLineToPeriod } from "@/lib/cost-invoice";
 import { generateAccessCode } from "@/lib/token";
 import { recordLifecycleAudit, sanitizeRecord } from "./entities";
 
@@ -32,9 +31,11 @@ function templateInput(values: Record<string, unknown>) {
 }
 
 export async function createInvoiceDraft(values: Record<string, unknown>, context: AuditContext) {
-  const billingPeriodId = requiredText(values.billingPeriodId, "billingPeriodId");
+  const billingPeriodId = values.billingPeriodId ? String(values.billingPeriodId) : null;
   const costCategoryId = requiredText(values.costCategoryId, "costCategoryId");
-  const period = await assertDraftPeriod(billingPeriodId);
+  const period = billingPeriodId ? await assertDraftPeriod(billingPeriodId) : null;
+  const propertyId = period?.propertyId || requiredText(values.propertyId, "propertyId");
+  if (!await prisma.property.findUnique({ where: { id: propertyId } })) throw new Error("Property not found");
   const category = await prisma.costCategory.findUnique({ where: { id: costCategoryId } });
   if (!category) throw new Error("Cost category not found");
   const sections = INVOICE_SECTIONS[categoryCode(category)] ?? ["OPERATING"];
@@ -44,23 +45,23 @@ export async function createInvoiceDraft(values: Record<string, unknown>, contex
   let revisionData = {};
   if (values.revisionOfId) {
     const old = await prisma.costInvoice.findUnique({ where: { id: String(values.revisionOfId) }, include: { attachments: true } });
-    if (!old || old.propertyId !== period.propertyId || old.costCategoryId !== costCategoryId || old.section !== section || old.status !== "CONFIRMED") throw new Error("Invalid invoice revision");
+    if (!old || old.propertyId !== propertyId || old.costCategoryId !== costCategoryId || old.section !== section || old.status !== "CONFIRMED") throw new Error("Invalid invoice revision");
     revisionOfId = old.id;
     revisionData = { dataJson: old.dataJson, totalAmountCents: old.totalAmountCents, attachments: { create: old.attachments.map((attachment) => ({ documentId: attachment.documentId })) } };
   }
   const created = await prisma.$transaction(async (tx) => {
-    const row = await tx.costInvoice.create({ data: { billingPeriodId, propertyId: period.propertyId, costCategoryId, section, totalAmountCents: 0n, dataJson: "{}", status: "DRAFT", revisionOfId, ...revisionData }, include: { lines: true } });
+    const row = await tx.costInvoice.create({ data: { billingPeriodId, propertyId, costCategoryId, section, totalAmountCents: 0n, dataJson: "{}", status: "DRAFT", revisionOfId, ...revisionData }, include: { lines: true } });
     await recordLifecycleAudit({ ...context, action: "CREATE_DRAFT", entityType: "CostInvoice", itemRef: row.id, after: row }, tx);
     return row;
   });
-  await invalidateProperty(period.propertyId);
+  await invalidateProperty(propertyId);
   return sanitizeRecord(created);
 }
 
 export async function updateInvoiceDraft(id: string, values: Record<string, unknown>, context: AuditContext) {
   const before = await prisma.costInvoice.findUnique({ where: { id } });
   if (!before) throw new Error("Invoice not found");
-  await assertDraftPeriod(before.billingPeriodId);
+  if (before.billingPeriodId) await assertDraftPeriod(before.billingPeriodId);
   if (before.status !== "DRAFT") throw new Error("Confirmed invoices are immutable; create a revision");
   const row = await prisma.$transaction(async (tx) => {
     const updated = await tx.costInvoice.update({ where: { id }, data: { dataJson: JSON.stringify(values.values ?? {}), note: values.note === undefined ? undefined : String(values.note) } });
@@ -84,7 +85,7 @@ export async function confirmInvoiceDraft(id: string, values: Record<string, unk
 export async function discardInvoiceDraft(id: string, context: AuditContext) {
   const before = await prisma.costInvoice.findUnique({ where: { id } });
   if (!before) throw new Error("Invoice not found");
-  await assertDraftPeriod(before.billingPeriodId);
+  if (before.billingPeriodId) await assertDraftPeriod(before.billingPeriodId);
   if (before.status !== "DRAFT") throw new Error("Confirmed invoices can only be corrected by a revision");
   await prisma.$transaction(async (tx) => {
     const after = await tx.costInvoice.update({ where: { id }, data: { status: "DISCARDED" } });
@@ -97,7 +98,7 @@ export async function discardInvoiceDraft(id: string, context: AuditContext) {
 export async function queueInvoiceExtraction(id: string, values: Record<string, unknown>, context: AuditContext) {
   const invoice = await prisma.costInvoice.findUnique({ where: { id }, include: { attachments: true } });
   if (!invoice) throw new Error("Invoice not found");
-  await assertDraftPeriod(invoice.billingPeriodId);
+  if (invoice.billingPeriodId) await assertDraftPeriod(invoice.billingPeriodId);
   if (invoice.status !== "DRAFT") throw new Error("A confirmed invoice cannot be extracted again");
   const documentId = values.documentId ? String(values.documentId) : invoice.attachments[0]?.documentId || invoice.documentId;
   if (!documentId || (!invoice.attachments.some((a) => a.documentId === documentId) && invoice.documentId !== documentId)) throw new Error("Document does not belong to this invoice");
@@ -165,24 +166,34 @@ export async function testInvoiceTemplate(id: string, samples: unknown, context:
     const documentId = requiredText(sample.documentId, "sample documentId");
     const job = await prisma.invoiceExtractionJob.findFirst({ where: { documentId, ocrJson: { not: null }, invoice: { costCategoryId: template.costCategoryId, section: template.section } }, include: { document: true }, orderBy: { createdAt: "desc" } });
     if (!job?.ocrJson) throw new Error("OCR test document is missing or does not match the template");
+    const verified = await prisma.invoiceVerifiedSample.findUnique({ where: { documentId } });
+    if (!verified || verified.fileHash !== job.document.fileHash || verified.confirmedBy.startsWith("system:")) throw new Error("Independently confirmed sample with original hash is required");
+    if (sample.expected && JSON.stringify(sample.expected) !== verified.expectedJson) throw new Error("Expected values must match the independently confirmed original");
+    sample.expected = JSON.parse(verified.expectedJson);
+    sample.expectedLines = JSON.parse(verified.expectedLinesJson);
     const extracted = extractInvoice(JSON.parse(job.ocrJson) as OcrDocument, rules);
     const mismatches = rules.fields.filter((rule) => rule.required || Object.hasOwn(sample.expected ?? {}, rule.field)).filter((rule) => !sample.expected?.[rule.field] || extracted.fields[rule.field]?.value !== sample.expected[rule.field]).map((rule) => rule.field);
     if (rules.table && (!Array.isArray(sample.expectedLines) || JSON.stringify(sample.expectedLines) !== JSON.stringify(extracted.lines))) mismatches.push("invoice lines");
-    results.push({ documentId, fileHash: job.document.fileHash, expected: sample.expected ?? {}, extracted, mismatches, passed: templateMatches(JSON.parse(job.ocrJson) as OcrDocument, markers) && !extracted.errors.length && !mismatches.length });
+    results.push({ documentId, role: verified.role, confirmedBy: verified.confirmedBy, fileHash: job.document.fileHash, expected: sample.expected ?? {}, extracted, mismatches, passed: templateMatches(JSON.parse(job.ocrJson) as OcrDocument, markers) && !extracted.errors.length && !mismatches.length });
   }
-  const passed = results.every((result) => result.passed);
+  const independent = new Set(results.map((r) => r.fileHash)).size === results.length && results.filter((r) => r.role === "TRAINING").length >= 2 && results.some((r) => r.role === "HOLDOUT");
+  const passed = independent && results.every((result) => result.passed);
   await prisma.$transaction(async (tx) => {
     const after = await tx.invoiceTemplate.update({ where: { id }, data: { testedHash: passed ? templateHash(rules, markers) : null, testResultsJson: JSON.stringify(results) } });
     await recordLifecycleAudit({ ...context, action: "TEST", entityType: "InvoiceTemplate", itemRef: id, before: template, after }, tx);
   });
-  return sanitizeRecord({ passed, results });
+  if (passed) await publishInvoiceTemplate(id, { ...context, reason: "Independent regression suite passed; automatic publication" });
+  return sanitizeRecord({ passed, published: passed, results });
 }
 
 export async function publishInvoiceTemplate(id: string, context: AuditContext) {
   const before = await prisma.invoiceTemplate.findUnique({ where: { id } });
   if (!before) throw new Error("Template not found");
   const hash = templateHash(JSON.parse(before.rulesJson), JSON.parse(before.markersJson));
+  if (before.status === "PUBLISHED" && before.testedHash === hash) return sanitizeRecord(before);
   if (before.status !== "DRAFT" || before.testedHash !== hash) throw new Error("Template must pass expected-value tests before publication");
+  const tests = JSON.parse(before.testResultsJson || "[]") as Array<{ passed: boolean; role: string; fileHash: string }>;
+  if (tests.length < 3 || !tests.every((t) => t.passed) || new Set(tests.map((t) => t.fileHash)).size !== tests.length || tests.filter((t) => t.role === "TRAINING").length < 2 || !tests.some((t) => t.role === "HOLDOUT")) throw new Error("Two confirmed independent training originals and one held-out comparison required");
   const row = await prisma.$transaction(async (tx) => {
     const updated = await tx.invoiceTemplate.update({ where: { id }, data: { status: "PUBLISHED", publishedAt: new Date() } });
     await recordLifecycleAudit({ ...context, action: "PUBLISH", entityType: "InvoiceTemplate", itemRef: id, before, after: updated }, tx);
@@ -237,6 +248,7 @@ export async function applyBillingCalculation(billingPeriodId: string, kind: str
   const period = await prisma.billingPeriod.findUnique({ where: { id: billingPeriodId } });
   if (!period) throw new Error("Billing period not found");
   if (period.sentDate || period.paidDate) throw new Error("Sent or paid billing periods cannot be changed");
+  if (await prisma.billingPeriod.count({ where: { propertyId: period.propertyId, id: { not: billingPeriodId }, status: { not: "SUPERSEDED" }, startDate: { lte: period.endDate }, endDate: { gte: period.startDate } } })) throw new Error("Aktive Abrechnungsperioden uberlappen; doppelte Quellenverrechnung gesperrt");
   const before = await prisma.billingSnapshot.findMany({ where: { billingPeriodId, costCategoryId: preview.costCategoryId } });
   const snapshot = await prisma.$transaction(async (tx) => {
     const current = await tx.billingPeriod.findUnique({ where: { id: billingPeriodId }, include: { statementRevisions: true } });
@@ -268,12 +280,17 @@ export async function applyBillingCalculation(billingPeriodId: string, kind: str
       create: { billingPeriodId, costCategoryId: preview.costCategoryId, totalAmount: 0, totalAmountCents: BigInt(preview.totalAmountCents), reviewed: false },
     });
     if (preview.kind === "HEATING_OIL") {
-      if (period.revisionOfPeriodId) await tx.categoryCalculationHead.deleteMany({ where: { billingPeriodId: period.revisionOfPeriodId, costCategoryId: preview.costCategoryId } });
       const rows = serializeExact(preview.details.fifoRows) as Array<{ lotId: string; consumedLiters: string; amountCents: string; co2CostCents: string; co2Grams: string }>;
       if (rows.length) await tx.oilLotConsumption.createMany({ data: rows.map((row) => ({
         lotId: row.lotId, snapshotId: created.id, quantityLiters: row.consumedLiters,
         amountCents: BigInt(row.amountCents), co2CostCents: BigInt(row.co2CostCents), co2Grams: BigInt(row.co2Grams),
       })) });
+    }
+    const category = await tx.costCategory.findUniqueOrThrow({ where: { id: preview.costCategoryId } });
+    const sources = await tx.costInvoice.findMany({ where: { propertyId: period.propertyId, costCategoryId: preview.costCategoryId, status: "CONFIRMED", revisions: { none: { status: "CONFIRMED" } }, servicePeriodStart: { lte: period.endDate }, servicePeriodEnd: { gte: period.startDate } }, include: { lines: true } });
+    for (const invoice of sources.filter((invoice) => !["HEATING_OIL", "TARIF", "JAHRESRECHNUNG"].includes(invoice.section))) for (const line of invoice.lines.filter((line) => eligibleForCategory(categoryCode(category), line))) {
+      const amountCents = allocateServiceLineToPeriod(line.amountCents, invoice.servicePeriodStart, invoice.servicePeriodEnd, period.startDate, period.endDate);
+      await tx.invoiceConsumption.create({ data: { invoiceId: invoice.id, lineId: line.id, snapshotId: created.id, billingPeriodId, periodStart: period.startDate, periodEnd: period.endDate, amountCents } });
     }
     await recordLifecycleAudit({ ...context, action: "APPLY_CALCULATION", entityType: "BillingSnapshot", itemRef: created.id, before, after: created }, tx);
     return created;
@@ -416,28 +433,6 @@ export async function uploadDocument(file: { download_url: string; file_id: stri
   if (declaredLength > MAX_UPLOAD_BYTES) throw new Error("File exceeds 10 MB");
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > MAX_UPLOAD_BYTES) throw new Error("File exceeds 10 MB");
-  const extByMime: Record<string, string> = { "application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
-  const fileName = `${randomUUID()}${extByMime[mimeType]}`;
-  const uploadDir = path.join(process.cwd(), "data", "uploads");
-  const filePath = path.join(uploadDir, fileName);
-  await mkdir(uploadDir, { recursive: true });
-  await writeFile(filePath, bytes, { flag: "wx" });
-  try {
-    const created = await prisma.$transaction(async (tx) => {
-      const row = await tx.document.create({ data: {
-        fileName, originalName: String(file.file_name || `chatgpt-${file.file_id}`).slice(0, 255),
-        mimeType, size: bytes.length, category: String(metadata.category || "other"),
-        billingPeriodId: metadata.billingPeriodId ? String(metadata.billingPeriodId) : null,
-        tenantId: metadata.tenantId ? String(metadata.tenantId) : null,
-        heatingOilDelivery: metadata.heatingOilDeliveryId ? { connect: { id: String(metadata.heatingOilDeliveryId) } } : undefined,
-        costInvoice: metadata.costInvoiceId ? { connect: { id: String(metadata.costInvoiceId) } } : undefined,
-      }});
-      await recordLifecycleAudit({ ...context, action: "UPLOAD", entityType: "Document", itemRef: row.id, after: row }, tx);
-      return row;
-    });
-    return sanitizeRecord(created);
-  } catch (error) {
-    await unlink(filePath).catch(() => undefined);
-    throw error;
-  }
+  const { intakeDocument } = await import("@/lib/document-intake");
+  return sanitizeRecord(await intakeDocument(bytes, mimeType, String(file.file_name || `chatgpt-${file.file_id}`), metadata, context));
 }

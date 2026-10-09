@@ -143,6 +143,7 @@ model Property {
   electricityContracts ElectricityContract[]
   electricityMeters    ElectricityMeter[]
   costInvoices         CostInvoice[]
+  storage              DocumentStorage?
   propertyTaxSetting   PropertyTaxSetting?
   costAllocationRules  PropertyCostAllocationRule[]
   createdAt            DateTime                     @default(now())
@@ -181,6 +182,7 @@ model Unit {
   electricityMeters       ElectricityMeter[]
   costAllocations         CostAllocation[]
   costAllocationRuleUnits PropertyCostAllocationRuleUnit[]
+  statePeriods            UnitStatePeriod[]
   directInvoiceLines      CostInvoiceLine[]
   heatMeters              HeatMeter[]
   createdAt               DateTime                         @default(now())
@@ -210,6 +212,7 @@ model Tenant {
   indexMinMonths         Int                            @default(12)
   unit                   Unit                           @relation(fields: [unitId], references: [id], onDelete: Cascade)
   documents              Document[]
+  parties                LeaseParty[]
   accessToken            TenantAccessToken?
   financialPeriods       LeaseFinancialPeriod[]
   costAllocations        CostAllocation[]
@@ -343,6 +346,8 @@ model Document {
   originalName       String
   mimeType           String
   size               Int
+  propertyId         String?
+  archive            DocumentArchive?
   fileHash           String?
   invoiceAttachments InvoiceAttachment[]
   extractionJobs     InvoiceExtractionJob[]
@@ -358,7 +363,7 @@ model Document {
 // in der gemeinsamen serverseitigen Billing-Engine bestimmt.
 model CostInvoice {
   id                 String                 @id @default(cuid())
-  billingPeriodId    String
+  billingPeriodId    String?
   propertyId         String
   costCategoryId     String
   supplier           String?
@@ -382,7 +387,7 @@ model CostInvoice {
   extractionJobs     InvoiceExtractionJob[]
   note               String?
   documentId         String?                @unique
-  billingPeriod      BillingPeriod          @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  billingPeriod      BillingPeriod?         @relation(fields: [billingPeriodId], references: [id], onDelete: SetNull)
   property           Property               @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   costCategory       CostCategory           @relation(fields: [costCategoryId], references: [id], onDelete: Restrict)
   document           Document?              @relation("CostInvoiceDocument", fields: [documentId], references: [id], onDelete: SetNull)
@@ -457,6 +462,7 @@ model LandlordInfo {
 // APIs as strings and are never converted to JS Number for billing arithmetic.
 
 model HeatingSystem {
+  activeTankId            String?
   id                      String              @id @default(cuid())
   propertyId              String
   name                    String
@@ -746,6 +752,8 @@ model ElectricityTariff {
   billingEffectiveReason String?
   // Unit prices need more precision than final Euro-cent amounts.  One Euro
   // equals 1,000,000 micro-euro; final allocation amounts remain cents.
+  sourceDocumentId       String?
+  vatRate                Decimal?
   priceMicroEuroPerKwh   BigInt
   monthlyBasePriceCents  BigInt
   name                   String?
@@ -783,6 +791,9 @@ model ElectricityReading {
   billingEffectiveDate DateTime?
   readingKwh           Decimal
   reason               String                    @default("REGULAR")
+  estimationMethod     String?
+  uncertaintyNote      String?
+  confirmed            Boolean                   @default(true)
   note                 String?
   meter                ElectricityMeter          @relation(fields: [meterId], references: [id], onDelete: Cascade)
   createdAt            DateTime                  @default(now())
@@ -840,6 +851,8 @@ model LeaseFinancialPeriod {
   monthlyColdRentCents                             BigInt
   monthlyPrepaymentCents                           BigInt
   monthlyGeneralOperatingAndHeatingPrepaymentCents BigInt                  @default(0)
+  sourceDocumentId                                 String?
+  monthlyElectricityPrepaymentCents                BigInt                  @default(0)
   monthlyFlatRateCents                             BigInt                  @default(0)
   reason                                           String?
   revisionOfId                                     String?
@@ -917,6 +930,10 @@ model CostAllocation {
 // Effective-dated allocation policy. Percentages are derived from the stored
 // area or weight and are never persisted as the source of truth.
 model PropertyCostAllocationRule {
+  purpose                               String                           @default("TOTAL")
+  supersededAt                          DateTime?
+  revisionOfId                          String?
+  consumptionSharePercent               Int?
   id                                    String                           @id @default(cuid())
   propertyId                            String
   costCategoryId                        String
@@ -988,6 +1005,8 @@ model HeatMeterReading {
   readingDate          DateTime
   billingEffectiveDate DateTime?
   readingValue         Decimal
+  confirmed            Boolean   @default(false)
+  sourceDocumentId     String?
   source               String    @default("MANUAL")
   notes                String?
   meter                HeatMeter @relation(fields: [meterId], references: [id], onDelete: Cascade)
@@ -1112,4 +1131,205 @@ model StatementRevision {
   billingPeriod      BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Restrict)
 
   @@unique([billingPeriodId, tenantId, revision])
+}
+
+// Effective-dated unit metadata: no historical state is inferred on migration.
+model UnitStatePeriod {
+  id               String    @id @default(cuid())
+  unitId           String
+  validFrom        DateTime
+  validTo          DateTime?
+  areaM2           Decimal
+  ownerOccupied    Boolean
+  sourceDocumentId String
+  unit             Unit      @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  createdAt        DateTime  @default(now())
+
+  @@index([unitId, validFrom])
+}
+
+// Tenant remains the stable legacy tenancy identifier; additional parties do not
+// create additional cost recipients or duplicate advance payments.
+model LeaseParty {
+  id               String    @id @default(cuid())
+  tenantId         String
+  firstName        String
+  lastName         String
+  email            String?
+  validFrom        DateTime
+  validTo          DateTime?
+  sourceDocumentId String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+model DomainChangePreview {
+  id          String    @id @default(cuid())
+  userId      String
+  action      String
+  payloadJson String
+  fingerprint String
+  impactJson  String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  resultJson  String?
+  createdAt   DateTime  @default(now())
+}
+
+model DocumentStorage {
+  testedAt          DateTime?
+  testedFingerprint String?
+  id                String    @id @default(cuid())
+  propertyId        String    @unique
+  property          Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  driveId           String
+  rootItemId        String
+  objectFolder      String
+  enabled           Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([driveId, rootItemId, objectFolder])
+}
+
+model DocumentArchive {
+  id           String   @id @default(cuid())
+  documentId   String   @unique
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  storageId    String
+  relativePath String
+  sha256       String
+  size         Int
+  itemId       String?
+  status       String   @default("PENDING")
+  error        String?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([storageId, relativePath])
+}
+
+model BackgroundJob {
+  id          String    @id @default(cuid())
+  kind        String
+  dedupeKey   String    @unique
+  payloadJson String
+  status      String    @default("QUEUED")
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now())
+  leaseUntil  DateTime?
+  leaseToken  String?
+  error       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, availableAt])
+}
+
+model MicrosoftImportSource {
+  testedAt          DateTime?
+  testedFingerprint String?
+  id                String    @id @default(cuid())
+  propertyId        String
+  kind              String
+  mailbox           String?
+  folderId          String
+  driveId           String?
+  costCategoryId    String
+  section           String
+  enabled           Boolean   @default(false)
+  autoBook          Boolean   @default(false)
+  intervalMinutes   Int       @default(15)
+  cursor            String?
+  nextRunAt         DateTime  @default(now())
+  lastError         String?
+  createdBy         String
+}
+
+model ImportedSourceItem {
+  id            String  @id @default(cuid())
+  sourceId      String
+  sourceKey     String
+  documentId    String
+  invoiceId     String
+  sourceVersion String?
+
+  @@unique([sourceId, sourceKey])
+}
+
+model StatementArtifact {
+  id              String   @id @default(cuid())
+  billingPeriodId String
+  tenantId        String
+  revision        Int?
+  previewId       String?
+  status          String   @default("DRAFT")
+  fingerprint     String
+  statementJson   String
+  documentId      String   @unique
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  @@unique([billingPeriodId, tenantId, revision])
+}
+
+model StatementDispatch {
+  id             String    @id @default(cuid())
+  artifactId     String
+  previewId      String    @unique
+  mailbox        String
+  recipient      String
+  subject        String
+  bodyText       String
+  graphMessageId String?
+  status         String    @default("PENDING")
+  acceptedAt     DateTime?
+  error          String?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+}
+
+model BillingNotice {
+  id         String    @id @default(cuid())
+  propertyId String
+  key        String
+  message    String
+  resolvedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([propertyId, key])
+}
+
+model InvoiceConsumption {
+  billingPeriodId String
+  id              String   @id @default(cuid())
+  invoiceId       String
+  lineId          String
+  snapshotId      String
+  periodStart     DateTime
+  periodEnd       DateTime
+  amountCents     BigInt
+
+  @@unique([lineId, snapshotId])
+}
+
+model AllocationConsumptionReading {
+  id               String   @id @default(cuid())
+  costCategoryId   String
+  unitId           String
+  readingDate      DateTime
+  quantity         Decimal
+  confirmed        Boolean  @default(false)
+  sourceDocumentId String
+
+  @@unique([costCategoryId, unitId, readingDate])
+}
+
+model InvoiceVerifiedSample {
+  id                String   @id @default(cuid())
+  documentId        String   @unique
+  fileHash          String
+  expectedJson      String
+  expectedLinesJson String
+  role              String
+  confirmedBy       String
+  confirmedAt       DateTime @default(now())
 }

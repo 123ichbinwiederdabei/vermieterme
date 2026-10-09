@@ -6,6 +6,7 @@ export const ALLOCATION_METHODS = [
   "FIXED_SHARES",
   "DIRECT_CONSUMPTION",
   "HEIZKOSTENV",
+  "MIXED",
   "BAVARIA_PROPERTY_TAX_RESIDENTIAL_COMPONENT",
 ] as const;
 
@@ -81,7 +82,6 @@ export function allocateConfiguredCost(
   periodEnd: Date,
   source: AllocationSource
 ): ConfiguredAllocationResult {
-  if (totalCents < 0n) throw new Error("Der zu verteilende Betrag darf nicht negativ sein.");
   const weights = allocationWeights(method, units);
   const totalWeight = weights.reduce((sum, value) => sum + value, 0n);
   if (totalWeight <= 0n) throw new Error("Mindestens eine teilnehmende Einheit mit positiver Basis ist erforderlich.");
@@ -108,7 +108,7 @@ export function allocateKnownUnitAmounts(
   units.forEach((unit, index) => {
     const amount = unitAmounts[index] ?? 0n;
     const weight = weights[index] ?? 0n;
-    if (!unit.included || weight <= 0n) return;
+    if (!unit.included || amount === 0n) return;
     const basis = allocationBasis(method, weight, totalWeight);
     unitDetails.push({
       unitId: unit.unitId,

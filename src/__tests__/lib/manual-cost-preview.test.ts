@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { billingPeriod: { findUnique: vi.fn() }, costCategory: { findUnique: vi.fn() } },
+  prisma: { propertyCostAllocationRule: { findMany: vi.fn().mockResolvedValue([]) }, unitStatePeriod: { findMany: vi.fn().mockResolvedValue([]) }, billingPeriod: { findUnique: vi.fn() }, costCategory: { findUnique: vi.fn() } },
 }));
 
 import { prisma } from "@/lib/prisma";

@@ -1,6 +1,6 @@
-import { ApiError } from "@/lib/api-utils";
+import { configuredAllocation } from "@/lib/configured-allocation";
+import { ApiError } from "@/lib/api-error";
 import {
-  allocateCents,
   calculateAnnualAreaRateCents,
   fromScaledInteger,
   serializeExact,
@@ -9,9 +9,8 @@ import {
 import {
   daysInclusive,
   isoDay,
-  splitUnitAmountAcrossTenants,
 } from "@/lib/energy-billing";
-import { categoryCode } from "@/lib/invoice-categories";
+import { categoryCode, eligibleForCategory } from "@/lib/invoice-categories";
 import { allocateServiceLineToPeriod } from "@/lib/cost-invoice";
 import { invoicePool } from "@/lib/invoice-pool";
 import { euroToCents } from "@/lib/money";
@@ -25,7 +24,7 @@ export type ManualCostPreview = {
   tenantAmountCents: string;
   landlordAmountCents: string;
   vacancyAmountCents: string;
-  allocations: ReturnType<typeof splitUnitAmountAcrossTenants>["allocations"];
+  allocations: import("@/lib/energy-billing").AllocationResult[];
   details: Record<string, unknown>;
   blockers: string[];
   warnings: string[];
@@ -127,6 +126,7 @@ export async function buildManualCostPreview(
     cost?.totalAmountCents ??
     (cost?.totalAmount ? BigInt(euroToCents(String(cost.totalAmount))) : 0n);
   let assessment = allocatable;
+  let charges: import("@/lib/configured-allocation").AllocationCharge[] | undefined;
   let source: Record<string, unknown> = {
     source: "MANUAL_COST",
     distributionKey: key,
@@ -243,7 +243,7 @@ export async function buildManualCostPreview(
       };
     }
   }
-  if (["WATER", "WASTE", "OTHER"].includes(code)) {
+  if (code !== "PROPERTY_TAX") {
     const pool = await invoicePool(
       period.propertyId,
       billingPeriodId,
@@ -254,28 +254,17 @@ export async function buildManualCostPreview(
     );
     if (pool.invoices.length) {
       allocatable = pool.eligible;
+      charges = pool.invoices.flatMap((invoice) => invoice.lines.filter((line) => eligibleForCategory(code, line)).map((line) => ({ amountCents: line.amountCents, start: invoice.servicePeriodStart!, end: invoice.servicePeriodEnd! })));
       assessment = pool.eligible + pool.excluded;
       source = { ...source, invoices: serializeExact(pool.invoices) };
       blockers.push(...pool.blockers);
-    } else assessment = allocatable;
+    } else { assessment = allocatable; if (allocatable !== 0n) blockers.push("Originalbeleg für Kosten fehlt."); }
   }
   if (allocatable > assessment)
     blockers.push(
       "Umlagefähiger Grundsteuerbetrag überschreitet den Bescheid.",
     );
-  const weights = units.map((unit) => {
-    if (key === "Wohnfläche")
-      return toScaledInteger(unit.areaM2?.toString() ?? "0");
-    if (key === "MEA") return BigInt(unit.shares);
-    if (key === "Gleicher Anteil") return 1n;
-    return 0n;
-  });
-  if (!(["Wohnfläche", "MEA", "Gleicher Anteil"] as string[]).includes(key))
-    blockers.push(
-      `Der Verteilerschlüssel „${key}“ kann nicht automatisch abgerechnet werden.`,
-    );
-  if (key === "Wohnfläche")
-    for (const unit of units)
+  for (const unit of units)
       if (toScaledInteger(unit.areaM2?.toString() ?? "0") <= 0n)
         blockers.push(`Wohnfläche für ${unit.name} fehlt.`);
   for (const unit of units)
@@ -285,33 +274,15 @@ export async function buildManualCostPreview(
           `Miet-/NK-Finanzperioden für ${tenant.firstName} ${tenant.lastName} decken den Abrechnungszeitraum nicht lückenlos ab.`,
         );
     }
-  const unitAmounts = allocateCents(allocatable, weights);
-  const allocations: ManualCostPreview["allocations"] = [];
-  let vacancy = 0n;
-  units.forEach((unit, index) => {
-    const split = splitUnitAmountAcrossTenants(
-      unitAmounts[index] ?? 0n,
-      unit.id,
-      unit.tenants,
-      period.startDate,
-      period.endDate,
-      {
-        distributionKey: key,
-        calculationBasis:
-          key === "Wohnfläche"
-            ? `${unit.areaM2?.toString() ?? "0"} m² von ${fromScaledInteger(weights.reduce((sum, value) => sum + value, 0n))} m²`
-            : key,
-        sourceType: "MANUAL_COST",
-        sourceReferenceId: costCategoryId,
-      },
-    );
-    allocations.push(...split.allocations);
-    vacancy += split.vacancyCents;
-  });
-  const tenantAmount = allocations.reduce(
-    (sum, row) => sum + BigInt(row.amountCents),
-    0n,
-  );
+  let resolved: Awaited<ReturnType<typeof configuredAllocation>> | undefined;
+  try {
+    resolved = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, units, start: period.startDate, end: period.endDate, amountCents: allocatable, sourceType: "MANUAL_COST", charges, legacyMethod: key === "Gleicher Anteil" ? "FIXED_SHARES" : "AREA" });
+    warnings.push(...resolved.warnings);
+  } catch (error) { blockers.push(error instanceof Error ? error.message : "Verteilung fehlgeschlagen"); }
+  const allocations = resolved?.allocations ?? [];
+  const vacancy = resolved?.vacancyAmountCents ?? 0n;
+  const tenantAmount = resolved?.tenantAmountCents ?? 0n;
+  const ownerAmount = resolved?.landlordOwnerAmountCents ?? 0n;
   const nonAllocatable =
     assessment > allocatable ? assessment - allocatable : 0n;
   return {
@@ -320,18 +291,20 @@ export async function buildManualCostPreview(
     costCategoryId,
     totalAmountCents: assessment.toString(),
     tenantAmountCents: tenantAmount.toString(),
-    landlordAmountCents: (nonAllocatable + vacancy).toString(),
+    landlordAmountCents: (nonAllocatable + vacancy + ownerAmount).toString(),
     vacancyAmountCents: vacancy.toString(),
     allocations,
     details: {
       ...source,
+      landlordOwnerAmountCents: ownerAmount.toString(),
+      rules: serializeExact(resolved?.rules ?? []),
       allocatableAmountCents: allocatable.toString(),
       nonAllocatableLandlordCents: nonAllocatable.toString(),
-      unitWeights: units.map((unit, index) => ({
+      unitWeights: units.map((unit) => ({
         unitId: unit.id,
         unitName: unit.name,
-        weight: weights[index].toString(),
-        amountCents: (unitAmounts[index] ?? 0n).toString(),
+        weight: resolved?.unitDetails.find((row) => row.unitId === unit.id)?.weight || "0",
+        amountCents: resolved?.unitDetails.find((row) => row.unitId === unit.id)?.amountCents ?? "0",
       })),
     },
     blockers,
@@ -341,7 +314,9 @@ export async function buildManualCostPreview(
         source,
         period: [isoDay(period.startDate), isoDay(period.endDate)],
         units,
-        weights: weights.map(String),
+        rules: resolved?.rules, states: resolved?.states, consumptionEvidence: resolved?.consumptionEvidence,
+        resolvedRules: resolved?.rules,
+        resolvedStates: resolved?.states,
         allocatable,
       }),
     ),

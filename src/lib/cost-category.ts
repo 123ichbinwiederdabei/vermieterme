@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { ApiError } from "@/lib/api-utils";
+import { ApiError } from "@/lib/api-error";
 
 const calculationTypes = ["MANUAL", "HEATING_OIL", "ELECTRICITY"] as const;
 

@@ -1,3 +1,4 @@
+import { configuredAllocation } from "@/lib/configured-allocation";
 import { createHash } from "crypto";
 import { ALLOCATION_POLICY } from "@/lib/allocation-policy";
 import { prisma } from "@/lib/prisma";
@@ -16,7 +17,7 @@ import {
   serializeExact,
   roundFraction,
 } from "@/lib/billing-v2";
-import { ApiError } from "@/lib/api-utils";
+import { ApiError } from "@/lib/api-error";
 import { buildSmallWastewaterPreview } from "@/lib/cost-invoice-billing";
 import { buildManualCostPreview } from "@/lib/manual-cost-preview";
 import {
@@ -156,6 +157,7 @@ export async function buildHeatingOilPreview(
                           snapshot: {
                             billingPeriodId: { not: billingPeriodId },
                             billingPeriod: {
+                              status: { not: "SUPERSEDED" },
                               OR: [
                                 { id: billingPeriodId },
                                 {
@@ -192,10 +194,7 @@ export async function buildHeatingOilPreview(
   const warnings: string[] = [];
   if (system.centralHotWater)
     blockers.push("Zentrale Warmwasserabrechnung ist derzeit deaktiviert.");
-  if (system.billingRegime === "STANDARD_HEIZKOSTENV")
-    blockers.push(
-      "Standard-Heizkostenabrechnung bleibt bis zur implementierten Wärmeverbrauchsberechnung gesperrt.",
-    );
+  if (system.billingRegime === "STANDARD_HEIZKOSTENV" && (system.consumptionSource !== "HEAT_METERS" || system.consumptionSharePercent < 50 || system.consumptionSharePercent > 70)) blockers.push("Standard-Heizkostenabrechnung benotigt bestatigte Warmeverbrauchsmessung und 50 bis 70 Prozent Verbrauchsanteil.");
   if (
     system.billingRegime !== "STANDARD_HEIZKOSTENV" &&
     !system.evidenceValidatedAt
@@ -254,7 +253,9 @@ export async function buildHeatingOilPreview(
   const fifoRows: Array<Record<string, unknown>> = [];
   const source: Array<Record<string, unknown>> = [];
 
-  for (const tank of system.tanks) {
+  const activeTanks = system.activeTankId ? system.tanks.filter((tank) => tank.id === system.activeTankId) : system.tanks;
+  if (activeTanks.length !== 1) blockers.push("Genau einen aktiven Heizöltank auswählen.");
+  for (const tank of activeTanks) {
     const startReading = boundaryReading(tank.stockReadings, period.startDate);
     const endReading = boundaryReading(tank.stockReadings, period.endDate);
     if (!startReading?.quantityLiters)
@@ -443,37 +444,20 @@ export async function buildHeatingOilPreview(
   );
   const landlordCo2 = (totalCo2Cost * BigInt(100 - tenantPercent) + 50n) / 100n;
   const allocatable = totalAmount - landlordCo2 - operating.excluded;
-  const unitAmounts = allocateCents(
-    allocatable,
-    units.map((unit) => toScaledInteger(unit.areaM2?.toString() ?? "0")),
-  );
-  const allocations: EnergyPreview["allocations"] = [];
-  let vacancy = 0n;
-  units.forEach((unit, index) => {
-    const split = splitUnitAmountAcrossTenants(
-      unitAmounts[index],
-      unit.id,
-      unit.tenants,
-      period.startDate,
-      period.endDate,
-      {
-        distributionKey: "AREA",
-        calculationBasis: `${unit.areaM2?.toString() ?? "0"} m² von ${fromScaledInteger(totalArea)} m²`,
-        sourceType: "HEATING_OIL",
-        sourceReferenceId: system.id,
-      },
-    );
-    allocations.push(...split.allocations);
-    vacancy += split.vacancyCents;
-  });
-  const tenantAmount = allocations.reduce(
-    (sum, row) => sum + BigInt(row.amountCents),
-    0n,
-  );
+  let resolved: Awaited<ReturnType<typeof configuredAllocation>> | undefined;
+  try {
+    resolved = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, units, start: period.startDate, end: period.endDate, amountCents: allocatable, sourceType: "HEATING_OIL", legacyMethod: system.billingRegime === "STANDARD_HEIZKOSTENV" ? undefined : "AREA" });
+    if (system.billingRegime === "STANDARD_HEIZKOSTENV" && resolved.rules.some((rule) => rule.allocationMethod !== "HEIZKOSTENV")) blockers.push("Standard-Heizkostenmodus benötigt einen HeizkostenV-Verteilerschlüssel.");
+  } catch (error) { blockers.push(error instanceof Error ? error.message : "Heizkostenverteilung fehlgeschlagen"); }
+  const allocations = resolved?.allocations ?? [];
+  const vacancy = resolved?.vacancyAmountCents ?? 0n;
+  const ownerAmount = resolved?.landlordOwnerAmountCents ?? 0n;
+  const tenantAmount = resolved?.tenantAmountCents ?? 0n;
   const sourceData = {
     system,
     source,
     fifoRows,
+    resolved,
     operating: operating.invoices,
     electricity,
     units,
@@ -487,6 +471,7 @@ export async function buildHeatingOilPreview(
     tenantAmountCents: tenantAmount.toString(),
     landlordAmountCents: (
       landlordCo2 +
+      ownerAmount +
       vacancy +
       operating.excluded
     ).toString(),
@@ -494,6 +479,8 @@ export async function buildHeatingOilPreview(
     allocations,
     details: {
       fifoRows,
+      landlordOwnerAmountCents: ownerAmount.toString(),
+      distribution: serializeExact(resolved?.unitDetails ?? []),
       operatingInvoices: serializeExact(operating.details),
       plantElectricity: serializeExact(electricity.details),
       totalAreaM2: fromScaledInteger(totalArea),
@@ -547,9 +534,11 @@ export async function buildElectricityPreview(
     end: string;
     quantity: string;
     basis: string;
+    ownerUse?: boolean;
   }> = [];
   const intervalDetails: unknown[] = [];
   let fixedOwner = 0n;
+  let fixedVacancy = 0n;
   let totalBase = 0n;
   const units = period.property.units;
   for (const contract of period.property.electricityContracts) {
@@ -561,15 +550,15 @@ export async function buildElectricityPreview(
     if (end < start) continue;
     const meters = contract.meters.filter(
       (meter) =>
-        ["UNIT_CONSUMPTION", "COMMON_ELECTRICITY"].includes(meter.role) &&
+        ["UNIT_CONSUMPTION", "OWNER_CONSUMPTION", "COMMON_ELECTRICITY"].includes(meter.role) &&
         (meter.validFrom ?? start) <= end &&
         (!meter.validTo || meter.validTo >= start),
     );
-    if (!meters.length) continue;
+    if (!meters.length) blockers.push(`Haushaltsstrom: Verbrauchszahler fur ${contract.provider} fehlen.`);
     const consumption = new Map<string, bigint>();
     for (const meter of meters) {
       const unit = units.find((unit) => unit.id === meter.unitId);
-      if (meter.role === "UNIT_CONSUMPTION" && !unit) {
+      if (["UNIT_CONSUMPTION", "OWNER_CONSUMPTION"].includes(meter.role) && !unit) {
         blockers.push(
           `Wohnungszuordnung für Zähler ${meter.meterNumber} fehlt.`,
         );
@@ -585,7 +574,7 @@ export async function buildElectricityPreview(
       blockers.push(...result.blockers);
       intervalDetails.push(...serializeExact(result.intervals));
       for (const row of result.intervals) {
-        if (meter.role === "UNIT_CONSUMPTION") {
+        if (["UNIT_CONSUMPTION", "OWNER_CONSUMPTION"].includes(meter.role)) {
           consumption.set(
             unit!.id,
             (consumption.get(unit!.id) ?? 0n) +
@@ -594,62 +583,25 @@ export async function buildElectricityPreview(
           variable.push({
             numerator: row.numerator,
             unitId: unit!.id,
-            tenantId: row.tenantId,
+            tenantId: unit!.ownerOccupied || meter.role === "OWNER_CONSUMPTION" ? null : row.tenantId,
+            ownerUse: unit!.ownerOccupied || meter.role === "OWNER_CONSUMPTION",
             start: row.start,
             end: row.end,
             quantity: row.consumptionKwh,
             basis: `${row.consumptionKwh} kWh · Zähler ${row.meterNumber} · ${row.priceMicroEuroPerKwh} µ€/kWh${row.fallbackNotes ? ` · Ersatzablesung: ${row.fallbackNotes}` : ""}`,
           });
         } else {
-          if (
-            row.numerator > 0n &&
-            units.every(
-              (unit) => toScaledInteger(unit.areaM2?.toString() ?? "0") === 0n,
-            )
-          ) {
-            blockers.push("Wohnflächen für Allgemeinstrom fehlen.");
-            continue;
-          }
-          const shares = allocateCents(
-            row.numerator,
-            units.map((unit) =>
-              toScaledInteger(unit.areaM2?.toString() ?? "0"),
-            ),
-          );
-          units.forEach((unit, i) => {
-            const split = splitUnitAmountAcrossTenants(
-              shares[i],
-              unit.id,
-              unit.tenants,
-              new Date(row.start),
-              new Date(row.end),
-              {
-                distributionKey: "AREA",
-                calculationBasis:
-                  "Allgemeinstrom nach Wohnfläche und Belegungstagen",
-                sourceType: "ELECTRICITY",
-              },
-            );
-            for (const allocation of split.allocations)
-              variable.push({
-                numerator: BigInt(allocation.amountCents),
-                unitId: unit.id,
-                tenantId: allocation.tenantId,
-                start: allocation.periodStart,
-                end: allocation.periodEnd,
-                quantity: "0",
-                basis: allocation.calculationBasis,
-              });
-            variable.push({
-              numerator: split.vacancyCents,
-              unitId: unit.id,
-              tenantId: null,
-              start: row.start,
-              end: row.end,
-              quantity: "0",
-              basis: "Eigentümer/Leerstand Allgemeinstrom",
-            });
-          });
+          try {
+            const common = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, purpose: "COMMON", units, start: new Date(row.start), end: new Date(row.end), amountCents: row.numerator, sourceType: "ELECTRICITY", legacyMethod: "AREA" });
+            intervalDetails.push({ commonRules: serializeExact(common.rules), commonStates: serializeExact(common.states) });
+            for (const allocation of common.allocations) variable.push({ numerator: BigInt(allocation.amountCents), unitId: allocation.unitId, tenantId: allocation.tenantId, ownerUse: !allocation.tenantId && common.unitDetails.some((detail) => detail.unitId === allocation.unitId && detail.ownerOccupied), start: allocation.periodStart, end: allocation.periodEnd, quantity: "0", basis: allocation.calculationBasis });
+            for (const detail of common.unitDetails.filter((detail) => !detail.ownerOccupied)) {
+              const allocated = common.allocations.filter((allocation) => allocation.unitId === detail.unitId).reduce((sum, allocation) => sum + BigInt(allocation.amountCents), 0n);
+              const vacant = BigInt(detail.amountCents) - allocated;
+              if (vacant) variable.push({ numerator: vacant, unitId: detail.unitId, tenantId: null, ownerUse: false, start: row.start, end: row.end, quantity: "0", basis: "Leerstand Allgemeinstrom" });
+            }
+          } catch (error) { blockers.push(error instanceof Error ? error.message : "Allgemeinstromverteilung fehlgeschlagen"); }
+
         }
       }
     }
@@ -675,42 +627,24 @@ export async function buildElectricityPreview(
     totalBase += contractBase;
     if (contractBase > 0n && !contract.basePriceAgreementNote?.trim())
       blockers.push("Vereinbarung zum Strom-Grundpreisschlüssel fehlt.");
-    const billable = units.filter((unit) =>
-      meters.some(
-        (meter) =>
-          meter.unitId === unit.id && meter.role === "UNIT_CONSUMPTION",
-      ),
-    );
-    const weights =
-      contract.basePriceAllocation === "EQUAL_PER_UNIT"
-        ? billable.map(() => 1n)
-        : billable.map((unit) => consumption.get(unit.id) ?? 0n);
-    if (contractBase > 0n && weights.every((weight) => weight === 0n)) {
-      blockers.push(
-        "Grundpreis bei Nullverbrauch: vereinbarten Ersatzschlüssel dokumentieren.",
-      );
-      fixedOwner += contractBase;
-      continue;
+    if (end >= new Date("2026-10-01T00:00:00Z")) {
+      try {
+        const base = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, purpose: "BASE", units, start, end, amountCents: contractBase, sourceType: "ELECTRICITY" });
+        allocations.push(...base.allocations);
+        fixedOwner += base.landlordOwnerAmountCents; fixedVacancy += base.vacancyAmountCents;
+        intervalDetails.push({ baseRules: serializeExact(base.rules), baseStates: serializeExact(base.states), landlordOwnerCents: base.landlordOwnerAmountCents.toString(), vacancyCents: base.vacancyAmountCents.toString() });
+      } catch (error) { blockers.push(error instanceof Error ? error.message : "Grundpreisverteilung fehlgeschlagen"); }
+    } else {
+      const billable = contract.basePriceAllocation === "EQUAL_PER_UNIT" ? units : units.filter((unit) => consumption.has(unit.id));
+      const weights = contract.basePriceAllocation === "EQUAL_PER_UNIT" ? billable.map(() => 1n) : billable.map((unit) => consumption.get(unit.id) ?? 0n);
+      if (contractBase && weights.every((weight) => weight === 0n)) { blockers.push("Grundpreis ohne gültige Verteilungsbasis."); fixedOwner += contractBase; continue; }
+      const shares = allocateCents(contractBase, weights);
+      billable.forEach((unit, i) => {
+        if (unit.ownerOccupied) { fixedOwner += shares[i]; return; }
+        const split = splitUnitAmountAcrossTenants(shares[i], unit.id, unit.tenants, start, end, { distributionKey: contract.basePriceAllocation, calculationBasis: `Grundpreis · ${contract.basePriceAllocation}`, sourceType: "ELECTRICITY" });
+        allocations.push(...split.allocations.filter((row) => BigInt(row.amountCents) !== 0n)); fixedVacancy += split.vacancyCents;
+      });
     }
-    const shares = allocateCents(contractBase, weights);
-    billable.forEach((unit, i) => {
-      const split = splitUnitAmountAcrossTenants(
-        shares[i],
-        unit.id,
-        unit.tenants,
-        start,
-        end,
-        {
-          distributionKey: contract.basePriceAllocation,
-          calculationBasis: `Grundpreis · ${contract.basePriceAllocation} · Belegungstage`,
-          sourceType: "ELECTRICITY",
-        },
-      );
-      allocations.push(
-        ...split.allocations.filter((row) => BigInt(row.amountCents) !== 0n),
-      );
-      fixedOwner += split.vacancyCents;
-    });
   }
   // Accumulate micro-euro products across every interval before final cents.
   const numerator = variable.reduce((sum, row) => sum + row.numerator, 0n);
@@ -720,9 +654,10 @@ export async function buildElectricityPreview(
     variable.map((row) => row.numerator),
   );
   let owner = fixedOwner;
+  let vacancy = fixedVacancy;
   variable.forEach((row, i) => {
     if (!row.tenantId) {
-      owner += shares[i];
+      if (row.ownerUse) owner += shares[i]; else vacancy += shares[i];
       return;
     }
     if (shares[i] === 0n) return;
@@ -739,7 +674,7 @@ export async function buildElectricityPreview(
     });
   });
   const tenantAmount = allocations.reduce(
-    (sum, row) => sum + BigInt(row.amountCents),
+    (sum, row) => sum + (row.tenantId ? BigInt(row.amountCents) : 0n),
     0n,
   );
   const sourceData = {
@@ -755,10 +690,10 @@ export async function buildElectricityPreview(
     costCategoryId,
     totalAmountCents: (totalVariable + totalBase).toString(),
     tenantAmountCents: tenantAmount.toString(),
-    landlordAmountCents: owner.toString(),
-    vacancyAmountCents: owner.toString(),
+    landlordAmountCents: (owner + vacancy).toString(),
+    vacancyAmountCents: vacancy.toString(),
     allocations,
-    details: { intervalDetails, basePriceCents: totalBase.toString() },
+    details: { intervalDetails, basePriceCents: totalBase.toString(), landlordOwnerCents: owner.toString(), vacancyCents: vacancy.toString() },
     blockers,
     warnings,
     sourceFingerprint: fingerprint(sourceData),

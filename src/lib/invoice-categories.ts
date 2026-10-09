@@ -113,5 +113,5 @@ export function eligibleForCategory(
     PROPERTY_TAX: ["BESCHEID"],
     OTHER: ["OPERATING"],
   };
-  return (allowed[code] ?? []).includes(line.classification);
+  return (allowed[code] ?? ["OPERATING"]).includes(line.classification);
 }

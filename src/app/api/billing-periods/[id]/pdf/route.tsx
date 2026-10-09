@@ -1,7 +1,10 @@
 import React from "react";
+import path from "node:path";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { auth } from "@/lib/auth";
 import { buildAllTenantStatements, buildTenantStatement } from "@/lib/billing-statement";
+import { prisma } from "@/lib/prisma";
+import { statementDocument } from "@/lib/billing-workflow";
 import { BillingV2Pdf } from "@/lib/billing-v2-pdf";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -10,6 +13,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const tenantId = new URL(request.url).searchParams.get("tenantId");
+    if (tenantId) {
+      const artifact = await prisma.statementArtifact.findFirst({ where: { billingPeriodId: id, tenantId, status: "ISSUED" }, orderBy: { revision: "desc" } });
+      if (artifact) {
+        const { document, bytes } = await statementDocument(artifact.id);
+        return new Response(new Uint8Array(bytes), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${path.posix.basename(document.archive!.relativePath).replace(/["\r\n]/g, "_")}"` } });
+      }
+    }
     const statements = tenantId ? [await buildTenantStatement(id, tenantId)] : await buildAllTenantStatements(id);
     if (statements.length === 0) return Response.json({ error: "Keine Mietverhältnisse im Zeitraum" }, { status: 400 });
     const buffer = await renderToBuffer(<BillingV2Pdf statements={statements}/>);

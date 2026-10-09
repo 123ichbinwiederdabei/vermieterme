@@ -144,6 +144,8 @@ export function InvoiceTemplateEditor({
   const [savedId, setSavedId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sampleRole, setSampleRole] = useState<Record<string, string>>({});
+  const [sampleApproval, setSampleApproval] = useState<string | null>(null);
   const [tested, setTested] = useState(false);
   function change(next: TemplateRules) {
     setRules(next);
@@ -234,6 +236,21 @@ export function InvoiceTemplateEditor({
       setBusy(false);
     }
   }
+  async function previewSample() {
+    setBusy(true); setMessage(""); setSampleApproval(null);
+    try {
+      const result = await request("/api/workflow", { operation: "preview_change", action: "confirm_invoice_sample", values: { documentId: sample.documentId, expected: expected[sample.documentId] || {}, expectedLines: rules.table ? JSON.parse(expectedLines[sample.documentId] || "[]") : [], role: sampleRole[sample.documentId] || "TRAINING" }, reason: "Sollwerte unabhängig am Original gelesen" });
+      setSampleApproval(result.previewId);
+    } catch (e) { setMessage(e instanceof Error ? e.message : "Prüfung fehlgeschlagen"); }
+    finally { setBusy(false); }
+  }
+  async function confirmSample() {
+    if (!sampleApproval) return;
+    setBusy(true); setMessage("");
+    try { await request("/api/workflow", { operation: "commit_change", previewId: sampleApproval, confirmed: true, reason: "Diese Sollwerte am Original ausdrücklich bestätigt" }); setSampleApproval(null); setMessage("Unabhängige Sollwerte gespeichert. Zwei Beispielbelege und einen zurückgehaltenen Vergleich bestätigen."); }
+    catch (e) { setMessage(e instanceof Error ? e.message : "Bestätigung fehlgeschlagen"); }
+    finally { setBusy(false); }
+  }
   async function test() {
     if (!savedId) return;
     setBusy(true);
@@ -253,7 +270,7 @@ export function InvoiceTemplateEditor({
       setTested(result.passed);
       setMessage(
         result.passed
-          ? "Alle ausgewählten Testbelege bestanden. Veröffentlichung möglich."
+          ? "Unabhängige Regression bestanden. Vorlage automatisch veröffentlicht."
           : JSON.stringify(
               result.results.map(
                 (r: {
@@ -317,6 +334,7 @@ export function InvoiceTemplateEditor({
                 className={input}
                 value={sampleIndex}
                 onChange={(e) => {
+                  setSampleApproval(null);
                   setSampleIndex(Number(e.target.value));
                   setPage(1);
                 }}
@@ -585,6 +603,7 @@ export function InvoiceTemplateEditor({
                     className={input}
                     value={expected[sample.documentId]?.[rule.field] ?? ""}
                     onChange={(e) => {
+                      setSampleApproval(null);
                       setExpected({
                         ...expected,
                         [sample.documentId]: {
@@ -611,6 +630,7 @@ export function InvoiceTemplateEditor({
                     rows={6}
                     value={expectedLines[sample.documentId] ?? ""}
                     onChange={(e) => {
+                      setSampleApproval(null);
                       setExpectedLines({
                         ...expectedLines,
                         [sample.documentId]: e.target.value,
@@ -632,6 +652,10 @@ export function InvoiceTemplateEditor({
                 {error}
               </p>
             ))}
+            <p className="text-sm text-zinc-600">Mindestens zwei unabhängig geprüfte Beispielbelege und ein zurückgehaltener Vergleichsbeleg. Sollwerte direkt am Original lesen.</p>
+            <label>Belegrolle<select aria-label="Belegrolle" className={input} value={sampleRole[sample.documentId] || "TRAINING"} onChange={(e) => { setSampleRole({ ...sampleRole, [sample.documentId]: e.target.value }); setSampleApproval(null); }}><option value="TRAINING">Beispielbeleg</option><option value="HOLDOUT">Zurückgehaltener Vergleich</option></select></label>
+            <button className={button} disabled={busy} onClick={() => void previewSample()}>Sollwerte am Original prüfen</button>
+            {sampleApproval && <div className="rounded border p-3"><p>{sample.name} · {sampleRole[sample.documentId] || "TRAINING"}</p><dl>{Object.entries(expected[sample.documentId] || {}).map(([field, value]) => <div key={field}><dt>{FIELD_LABELS[field] || field}</dt><dd>{value}</dd></div>)}</dl><button className={button} disabled={busy} onClick={() => void confirmSample()}>Diese Sollwerte bestätigen</button></div>}
             <div className="flex flex-wrap gap-2">
               <button
                 className={button}

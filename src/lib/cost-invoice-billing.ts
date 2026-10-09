@@ -1,6 +1,7 @@
+import { configuredAllocation } from "@/lib/configured-allocation";
 import { createHash } from "crypto";
-import { ApiError } from "@/lib/api-utils";
-import { allocateCents, serializeExact } from "@/lib/billing-v2";
+import { ApiError } from "@/lib/api-error";
+import { serializeExact } from "@/lib/billing-v2";
 import { isoDay, splitUnitAmountAcrossTenants } from "@/lib/energy-billing";
 import { prisma } from "@/lib/prisma";
 import {
@@ -8,7 +9,7 @@ import {
   exactElectricityTotal,
 } from "@/lib/electricity-intervals";
 import { invoicePool } from "@/lib/invoice-pool";
-import { categoryCode } from "@/lib/invoice-categories";
+import { categoryCode, eligibleForCategory } from "@/lib/invoice-categories";
 
 export {
   isEligibleInvoiceLine,
@@ -154,35 +155,19 @@ export async function buildSmallWastewaterPreview(
         );
     }
   }
-  const weights = units.map(() => 1n);
-  const unitShares = allocateCents(eligible, weights);
-  let vacancy = 0n;
-  const allocations: InvoicePreview["allocations"] = [];
-  units.forEach((unit, index) => {
-    const split = splitUnitAmountAcrossTenants(
-      unitShares[index] ?? 0n,
-      unit.id,
-      unit.tenants,
-      period.startDate,
-      period.endDate,
-      {
-        distributionKey: "EQUAL",
-        calculationBasis: `Gleicher Anteil: 1/${units.length} · Belegungstage`,
-        sourceType: "SMALL_WASTEWATER",
-        sourceReferenceId: costCategoryId,
-      },
-    );
-    allocations.push(...split.allocations);
-    vacancy += split.vacancyCents;
-  });
-  const tenantAmount = allocations.reduce(
-    (sum, row) => sum + BigInt(row.amountCents),
-    0n,
-  );
+  let resolved: Awaited<ReturnType<typeof configuredAllocation>> | undefined;
+  try { resolved = await configuredAllocation({ propertyId: period.propertyId, categoryId: costCategoryId, units, start: period.startDate, end: period.endDate, amountCents: eligible, sourceType: "SMALL_WASTEWATER", charges: [...pool.invoices.flatMap((invoice) => invoice.lines.filter((line) => eligibleForCategory("WASTEWATER", line)).map((line) => ({ amountCents: line.amountCents, start: invoice.servicePeriodStart!, end: invoice.servicePeriodEnd! }))), { amountCents: electricity.amountCents, start: period.startDate, end: period.endDate }], legacyMethod: "FIXED_SHARES" }); }
+  catch (error) { blockers.push(error instanceof Error ? error.message : "Verteilung fehlgeschlagen"); }
+  const vacancy = resolved?.vacancyAmountCents ?? 0n;
+  const owner = resolved?.landlordOwnerAmountCents ?? 0n;
+  const allocations = resolved?.allocations ?? [];
+  const tenantAmount = resolved?.tenantAmountCents ?? 0n;
   const sourceData = serializeExact({
     invoices,
     units,
     electricity,
+    rules: resolved?.rules,
+    states: resolved?.states,
     period: [isoDay(period.startDate), isoDay(period.endDate)],
   });
   const sourceFingerprint = createHash("sha256")
@@ -194,10 +179,11 @@ export async function buildSmallWastewaterPreview(
     costCategoryId,
     totalAmountCents: (eligible + excluded).toString(),
     tenantAmountCents: tenantAmount.toString(),
-    landlordAmountCents: (excluded + vacancy).toString(),
+    landlordAmountCents: (excluded + vacancy + owner).toString(),
     vacancyAmountCents: vacancy.toString(),
     allocations,
     details: {
+      landlordOwnerAmountCents: owner.toString(),
       invoices: serializeExact(pool.details),
       eligibleAmountCents: eligible.toString(),
       excludedAmountCents: excluded.toString(),

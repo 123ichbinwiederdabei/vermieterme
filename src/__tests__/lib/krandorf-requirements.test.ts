@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    unitStatePeriod: { findMany: vi.fn().mockResolvedValue([]) },
+    propertyCostAllocationRule: { findMany: vi.fn(async ({ where }: { where: { costCategoryId: string } }) => [{ id: "dated-rule", validFrom: new Date("2026-01-01"), validTo: null, allocationMethod: where.costCategoryId === "sewage" ? "FIXED_SHARES" : "AREA", consumptionSharePercent: null, units: ["isabella", "vladimir", "owner"].map((unitId) => ({ unitId, included: where.costCategoryId !== "tax" || unitId !== "owner", weight: "1", areaM2: null })) }]) },
     statementRevision: { findFirst: vi.fn().mockResolvedValue(null) },
     billingPeriod: { findUnique: vi.fn() },
     tenant: { findUnique: vi.fn() },
@@ -196,7 +198,7 @@ it("Grundsteuer distributes the rental component over 280 m², excluding owner a
     period() as never,
   );
   const r = await buildManualCostPreview("period", "tax");
-  expect(r.allocations.map((a) => a.amountCents)).toEqual(["8000", "20000"]);
+  expect(r.allocations.filter((a) => a.tenantId).map((a) => a.amountCents)).toEqual(["8000", "20000"]);
 });
 it("Kleinkläranlage charges one third to each tenant and the owner", async () => {
   vi.mocked(prisma.billingPeriod.findUnique).mockResolvedValue(
@@ -224,7 +226,7 @@ it("Kleinkläranlage charges one third to each tenant and the owner", async () =
   ] as never);
   vi.mocked(prisma.electricityContract.findMany).mockResolvedValue([]);
   const r = await buildSmallWastewaterPreview("period", "sewage");
-  expect(r.allocations.map((a) => a.amountCents)).toEqual(["13000", "13000"]);
+  expect(r.allocations.filter((a) => a.tenantId).map((a) => a.amountCents)).toEqual(["13000", "13000"]);
 });
 it("Tenant change uses interval consumption rather than a day split of the annual total", async () => {
   const p = electricPeriod();
@@ -241,7 +243,7 @@ it("Tenant change uses interval consumption rather than a day split of the annua
   vi.mocked(prisma.billingPeriod.findUnique).mockResolvedValue(p as never);
   const r = await buildElectricityPreview("period", "electricity");
   expect(r.blockers).toEqual([]);
-  expect(r.allocations.map((a) => a.amountCents)).toEqual(["90000", "10000"]);
+  expect(r.allocations.filter((a) => a.tenantId).map((a) => a.amountCents)).toEqual(["90000", "10000"]);
 });
 it("Standard HeizkostenV is blocked if declared heat data has no implemented consumption calculation", async () => {
   const p = oilPeriod();
@@ -366,7 +368,7 @@ it("Water with a valid cent amount uses the full 390 m² and retains the owner s
   };
   vi.mocked(prisma.billingPeriod.findUnique).mockResolvedValue(p as never);
   const result = await buildManualCostPreview("period", "water");
-  expect(result.allocations.map((a) => a.amountCents)).toEqual([
+  expect(result.allocations.filter((a) => a.tenantId).map((a) => a.amountCents)).toEqual([
     "8000",
     "20000",
   ]);

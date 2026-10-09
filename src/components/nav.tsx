@@ -10,6 +10,7 @@ const links = [
   { href: "/tenants", label: "Mieter" },
   { href: "/rent-changes", label: "Miet- und NK-Historie" },
   { href: "/billing", label: "Abrechnungen" },
+  { href: "/workflow", label: "Prüfung & Freigabe" },
   { href: "/heating-oil", label: "Heizöl" },
   { href: "/electricity", label: "Strom" },
   { href: "/small-wastewater", label: "Kleinkläranlage" },

@@ -8,6 +8,7 @@ export const fixturePng = Buffer.from(
 );
 const day = (value: string) => new Date(`${value}T00:00:00Z`);
 export async function createKrandorfFixture(db: PrismaClient, prefix: string) {
+  await db.user.upsert({ where: { id: "test-user" }, create: { id: "test-user", name: "Test administrator" }, update: {} });
   const property = await db.property.create({
     data: {
       id: `${prefix}-property`,
@@ -205,6 +206,16 @@ export async function createKrandorfFixture(db: PrismaClient, prefix: string) {
       },
     });
   }
+  for (const definition of BILLING_CATEGORIES) {
+    await db.cost.create({ data: { billingPeriodId: period.id, costCategoryId: categories[definition.code], totalAmount: 0, totalAmountCents: 0n, enabled: true } });
+    if (definition.code === "ELECTRICITY") {
+      await db.propertyCostAllocationRule.create({ data: { propertyId: property.id, costCategoryId: categories[definition.code], purpose: "BASE", allocationMethod: "FIXED_SHARES", validFrom: period.startDate, sourceDocumentId: document.id, units: { create: units.map((unit) => ({ unitId: unit.id, included: true, weight: "1" })) } } });
+    } else {
+      await db.propertyCostAllocationRule.create({ data: { propertyId: property.id, costCategoryId: categories[definition.code], allocationMethod: ["WASTE", "WASTEWATER"].includes(definition.code) ? "FIXED_SHARES" : "AREA", validFrom: period.startDate, sourceDocumentId: document.id, units: { create: units.map((unit) => ({ unitId: unit.id, included: definition.code !== "PROPERTY_TAX" && definition.code !== "HEATING" || !unit.ownerOccupied, weight: "1" })) } } });
+    }
+    await db.leaseCostCategoryAgreement.createMany({ data: tenants.filter(() => definition.code !== "WASTEWATER").map((tenant) => ({ tenantId: tenant.id, costCategoryId: categories[definition.code], validFrom: period.startDate, confirmedBy: "test-user", contractDocumentId: document.id, note: "Verified test contract" })) });
+  }
+  await db.document.update({ where: { id: document.id }, data: { propertyId: property.id } });
   return {
     property,
     period,

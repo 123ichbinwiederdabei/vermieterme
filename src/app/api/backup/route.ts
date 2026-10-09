@@ -6,6 +6,29 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 
 const modelReads = {
+  auditPrincipals: () => prisma.user.findMany({ select: { id: true, name: true, email: true, emailVerified: true, image: true } }),
+  mcpAuditEvents: () => prisma.mcpAuditEvent.findMany(),
+  unitStatePeriods: () => prisma.unitStatePeriod.findMany(),
+  leasePartys: () => prisma.leaseParty.findMany(),
+  domainChangePreviews: () => prisma.domainChangePreview.findMany(),
+  documentStorages: () => prisma.documentStorage.findMany(),
+  documentArchives: () => prisma.documentArchive.findMany(),
+  backgroundJobs: () => prisma.backgroundJob.findMany(),
+  microsoftImportSources: () => prisma.microsoftImportSource.findMany(),
+  importedSourceItems: () => prisma.importedSourceItem.findMany(),
+  statementArtifacts: () => prisma.statementArtifact.findMany(),
+  statementDispatchs: () => prisma.statementDispatch.findMany(),
+  billingNotices: () => prisma.billingNotice.findMany(),
+  invoiceConsumptions: () => prisma.invoiceConsumption.findMany(),
+  allocationConsumptionReadings: () => prisma.allocationConsumptionReading.findMany(),
+  invoiceVerifiedSamples: () => prisma.invoiceVerifiedSample.findMany(),
+  propertyCostAllocationRules: () => prisma.propertyCostAllocationRule.findMany(),
+  propertyCostAllocationRuleUnits: () => prisma.propertyCostAllocationRuleUnit.findMany(),
+  heatMeters: () => prisma.heatMeter.findMany(),
+  heatMeterReadings: () => prisma.heatMeterReading.findMany(),
+  oilInventoryBaselines: () => prisma.oilInventoryBaseline.findMany(),
+  billingPeriodEvidences: () => prisma.billingPeriodEvidence.findMany(),
+  leaseFlatRateCoverages: () => prisma.leaseFlatRateCoverage.findMany(),
   propertyTaxSettings: () => prisma.propertyTaxSetting.findMany(),
   costInvoices: () => prisma.costInvoice.findMany(),
   costInvoiceLines: () => prisma.costInvoiceLine.findMany(),
@@ -62,20 +85,21 @@ export function GET() {
       ),
     );
     const body = serializeExact({
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       data: Object.fromEntries(entries),
     });
     return new Response(JSON.stringify(body, null, 2), {
       headers: {
         "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="vermieterme-backup-v3-${new Date().toISOString().slice(0, 10)}.json"`,
+        "Content-Disposition": `attachment; filename="vermieterme-backup-v4-${new Date().toISOString().slice(0, 10)}.json"`,
       },
     });
   });
 }
 
 const RESTORE_ORDER: Array<[string, keyof typeof prisma]> = [
+  ["auditPrincipals", "user"],
   ["properties", "property"],
   ["costCategories", "costCategory"],
   ["units", "unit"],
@@ -105,6 +129,8 @@ const RESTORE_ORDER: Array<[string, keyof typeof prisma]> = [
   ["costs", "cost"],
   ["prepayments", "prepayment"],
   ["billingSnapshots", "billingSnapshot"],
+  ["propertyCostAllocationRules", "propertyCostAllocationRule"],
+  ["propertyCostAllocationRuleUnits", "propertyCostAllocationRuleUnit"],
   ["costAllocations", "costAllocation"],
   ["oilLotConsumptions", "oilLotConsumption"],
   ["categoryCalculationHeads", "categoryCalculationHead"],
@@ -119,6 +145,26 @@ const RESTORE_ORDER: Array<[string, keyof typeof prisma]> = [
   ["pdfTemplates", "pdfTemplate"],
   ["rentChanges", "rentChange"],
   ["vpiEntries", "vpiEntry"],
+  ["unitStatePeriods", "unitStatePeriod"],
+  ["leasePartys", "leaseParty"],
+  ["domainChangePreviews", "domainChangePreview"],
+  ["documentStorages", "documentStorage"],
+  ["documentArchives", "documentArchive"],
+  ["backgroundJobs", "backgroundJob"],
+  ["microsoftImportSources", "microsoftImportSource"],
+  ["importedSourceItems", "importedSourceItem"],
+  ["statementArtifacts", "statementArtifact"],
+  ["statementDispatchs", "statementDispatch"],
+  ["billingNotices", "billingNotice"],
+  ["invoiceConsumptions", "invoiceConsumption"],
+  ["allocationConsumptionReadings", "allocationConsumptionReading"],
+  ["invoiceVerifiedSamples", "invoiceVerifiedSample"],
+  ["heatMeters", "heatMeter"],
+  ["heatMeterReadings", "heatMeterReading"],
+  ["oilInventoryBaselines", "oilInventoryBaseline"],
+  ["billingPeriodEvidences", "billingPeriodEvidence"],
+  ["leaseFlatRateCoverages", "leaseFlatRateCoverage"],
+  ["mcpAuditEvents", "mcpAuditEvent"],
 ];
 export function POST(request: Request) {
   return apiHandler(async () => {
@@ -127,9 +173,9 @@ export function POST(request: Request) {
       version: number;
       data: Record<string, unknown>;
     };
-    if (body.version !== 3 || !body.data)
+    if (body.version !== 4 || !body.data)
       throw new ApiError(
-        "Version-3-Backup erforderlich; ältere Sicherungen isoliert migrieren",
+        "Version-4-Backup erforderlich; ältere Sicherungen isoliert migrieren",
         400,
       );
     for (const key of Object.keys(modelReads))
@@ -209,6 +255,6 @@ export function POST(request: Request) {
           ).createMany({ data: prepared });
       }
     });
-    return jsonOk({ success: true, version: 3 });
+    return jsonOk({ success: true, version: 4 });
   });
 }

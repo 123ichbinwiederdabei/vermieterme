@@ -7,18 +7,18 @@ import {
 } from "@/lib/mcp/entities";
 
 describe("MCP entity policy registry", () => {
-  it("discovers every Prisma model and identifies sensitive models while allowing administrator CRUD", () => {
+  it("discovers every Prisma model and identifies sensitive models while protecting histories and business data", () => {
     const entities = listEntityTypes();
     expect(entities.map((entity) => entity.name)).toContain("Property");
     expect(entities.map((entity) => entity.name)).toContain("McpAuditEvent");
-    expect(entities.find((entity) => entity.name === "BillingSnapshot")).toMatchObject({ readable: true, create: true, update: true, delete: true, protected: true });
-    expect(entities.find((entity) => entity.name === "Property")).toMatchObject({ create: true, update: true, delete: true });
+    expect(entities.find((entity) => entity.name === "BillingSnapshot")).toMatchObject({ readable: true, create: false, update: false, delete: false, protected: true });
+    expect(entities.find((entity) => entity.name === "Property")).toMatchObject({ create: false, update: false, delete: false });
   });
 
-  it("describes exact fields while marking secrets redacted but writable for the private administrator", () => {
+  it("describes exact fields while marking secrets redacted but read-only for protected business models", () => {
     const user = describeEntityType("User");
     const password = user.fields.find((field) => field.name === "password");
-    expect(password).toMatchObject({ secret: true, writable: true });
+    expect(password).toMatchObject({ secret: true, writable: false });
   });
 
   it("round-trips opaque references including composite identifiers", () => {

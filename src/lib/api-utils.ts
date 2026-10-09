@@ -13,6 +13,12 @@ export async function requireAuth() {
   return session as { user: { id: string; email?: string | null } };
 }
 
+export async function requireAdmin() {
+  const session = await requireAuth();
+  if (!process.env.ADMIN_EMAIL || session.user.email?.toLowerCase() !== process.env.ADMIN_EMAIL.toLowerCase()) throw new ApiError("Administrator-Zugang erforderlich", 403);
+  return session;
+}
+
 export function apiHandler(
   fn: () => Promise<NextResponse | Response>,
 ): Promise<NextResponse | Response> {
